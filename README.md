@@ -75,5 +75,9 @@ python bilibili_mgba_controller.py
 欢迎提交 Issue 和 Pull Request 来帮助我们改进项目。
 
 ## 协议
+# We-play-Pokemon
 
-本项目使用 [MIT 协议](./LICENSE)。
+## 许可证
+本项目采用 GNU 通用公共许可证第3版（GPLv3）发布。详情请见 [LICENSE](LICENSE) 文件。
+
+您可以自由复制、分发和修改本程序，但需遵守 GPLv3 的条款。源代码可在 [本仓库](https://github.com/Ninot1Quyi/We-play-Pokemon) 获取。
