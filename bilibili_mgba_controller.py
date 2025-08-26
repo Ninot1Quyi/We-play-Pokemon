@@ -61,7 +61,7 @@ APP_ID = 1757756104085  # 在开放平台创建的项目ID
 ROOM_OWNER_AUTH_CODE = 'CCHWE6NUD43K7'  # 主播身份码
 
 # 弹幕获取模式：'wss' 或 'openlive'
-DANMAKU_MODE = 'wss'
+DANMAKU_MODE = 'openlive'
 
 # 时间文件
 TIME_FILE = "start_time.txt"
@@ -167,11 +167,25 @@ sse_clients = []  # SSE客户端列表
 sse_lock = threading.Lock()  # SSE客户端锁
 danmaku_saver = DanmakuSaver()  # 弹幕保存器实例
 
-# 最新指令缓存机制
+# 最新指令缓存机制（无政府模式）
 latest_command = None  # 最新的指令
 latest_command_lock = threading.Lock()  # 最新指令锁
 executing_command = False  # 是否正在执行指令
 execution_lock = threading.Lock()  # 执行锁
+
+# 模式切换系统
+current_mode = "自由"  # 当前模式："自由" 或 "秩序"
+mode_lock = threading.Lock()  # 模式锁
+vote_queue = deque(maxlen=100)  # 投票队列，最大100票
+vote_lock = threading.Lock()  # 投票锁
+freedom_votes = 0  # 自由模式票数
+order_votes = 0  # 秩序模式票数
+
+# 秩序模式相关
+order_commands = {}  # 秩序模式指令统计 {command: count}
+order_start_time = None  # 秩序模式统计开始时间
+order_lock = threading.Lock()  # 秩序模式锁
+ORDER_INTERVAL = 10  # 秩序模式统计间隔（秒）
 
 # 自动输入机制
 last_command_time = time.time()  # 最后一次接收指令的时间
@@ -375,6 +389,128 @@ def press_key(key: str, duration: float = 0.1):
     except Exception as e:
         logger.error(f"Failed to press key {key}: {e}")
 
+def add_vote(vote_type):
+    """添加投票到队列并更新票数统计"""
+    global freedom_votes, order_votes
+    
+    with vote_lock:
+        # 如果队列满了，移除最旧的投票
+        if len(vote_queue) >= 100:
+            old_vote = vote_queue.popleft()
+            if old_vote == "自由":
+                freedom_votes = max(0, freedom_votes - 1)
+            elif old_vote == "秩序":
+                order_votes = max(0, order_votes - 1)
+        
+        # 添加新投票
+        vote_queue.append(vote_type)
+        if vote_type == "自由":
+            freedom_votes += 1
+        elif vote_type == "秩序":
+            order_votes += 1
+        
+        logger.info(f"Added vote: {vote_type}. Current votes - 自由: {freedom_votes}, 秩序: {order_votes}")
+
+def check_mode_switch():
+    """检查是否需要切换模式（基于百分比）"""
+    global current_mode
+    
+    with mode_lock:
+        total_votes = freedom_votes + order_votes
+        if total_votes == 0:
+            return False
+            
+        freedom_percentage = (freedom_votes / total_votes) * 100
+        order_percentage = (order_votes / total_votes) * 100
+        
+        if current_mode == "秩序":
+            # 秩序模式时，自由票需要超过50%才能切换到自由模式
+            if freedom_percentage > 50:
+                current_mode = "自由"
+                logger.info(f"Mode switched to 自由 (freedom: {freedom_percentage:.1f}%, order: {order_percentage:.1f}%)")
+                # 重置秩序模式统计
+                with order_lock:
+                    global order_commands, order_start_time
+                    order_commands.clear()
+                    order_start_time = None
+                return True
+        elif current_mode == "自由":
+            # 自由模式时，秩序票需要超过75%才能切换到秩序模式
+            if order_percentage > 75:
+                current_mode = "秩序"
+                logger.info(f"Mode switched to 秩序 (freedom: {freedom_percentage:.1f}%, order: {order_percentage:.1f}%)")
+                # 初始化秩序模式统计
+                with order_lock:
+                    order_commands.clear()
+                    order_start_time = time.time()
+                return True
+    return False
+
+def add_order_command(command):
+    """在秩序模式下添加指令到统计"""
+    global order_start_time
+    with order_lock:
+        if order_start_time is None:
+            order_start_time = time.time()
+        
+        # 检查是否需要重置统计（超过10秒）
+        current_time = time.time()
+        if current_time - order_start_time >= ORDER_INTERVAL:
+            # 执行票数最高的指令
+            if order_commands:
+                execute_order_command()
+            # 重置统计
+            order_commands.clear()
+            order_start_time = current_time
+        
+        # 添加指令到统计
+        if command in order_commands:
+            order_commands[command] += 1
+        else:
+            order_commands[command] = 1
+        
+        logger.info(f"Order command added: {command}. Current stats: {order_commands}")
+
+def execute_order_command():
+    """执行秩序模式下票数最高的指令"""
+    if not order_commands:
+        return
+    
+    # 找到票数最高的指令
+    sorted_commands = sorted(order_commands.items(), key=lambda x: x[1], reverse=True)
+    winning_command = sorted_commands[0][0]
+    winning_votes = sorted_commands[0][1]
+    
+    logger.info(f"Executing order winner: {winning_command} with {winning_votes} votes")
+    
+    # 执行指令
+    with execution_lock:
+        global executing_command
+        executing_command = True
+        try:
+            control_mgba(winning_command)
+        finally:
+            executing_command = False
+
+def order_execution_thread():
+    """秩序模式执行线程"""
+    global order_start_time
+    while True:
+        with mode_lock:
+            if current_mode == "秩序":
+                with order_lock:
+                    if order_start_time is not None:
+                        current_time = time.time()
+                        if current_time - order_start_time >= ORDER_INTERVAL:
+                            # 执行票数最高的指令
+                            if order_commands:
+                                execute_order_command()
+                            # 重置统计
+                            order_commands.clear()
+                            order_start_time = current_time
+        
+        time.sleep(1)  # 每秒检查一次
+
 def generate_random_command():
     """生成随机指令，从l0-9+i0-9+j0-9+i0-9中随机选择1-3个"""
     # 定义可用的基础指令
@@ -568,7 +704,7 @@ def execute_latest_command():
         time.sleep(0.1)  # 检查间隔
 
 def process_danmaku_command(username: str, command: str, room_id: str = None):
-    """处理弹幕指令的通用函数，支持组合指令如 a3+b3+i2 或 a3 b3 i2"""
+    """处理弹幕指令的通用函数，支持组合指令如 a3+b3+i2 或 a3 b3 i2，以及模式投票"""
     global latest_command, last_command_time, auto_mode
     
     # 更新最后指令时间并退出自动模式
@@ -580,17 +716,88 @@ def process_danmaku_command(username: str, command: str, room_id: str = None):
     
     command = command.strip()
     original_command = command  # 保存原始指令用于CSV记录
+    command_lower = command.lower()
     
     # 获取当前时间戳（精确到秒）
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # 检查是否是投票指令
+    vote_commands = {
+        '自由模式': '自由',
+        '自由': '自由', 
+        'anarchy': '自由',
+        'freedom': '自由',
+        '秩序模式': '秩序',
+        '秩序': '秩序',
+        'democracy': '秩序',
+        'order': '秩序'
+    }
+    
+    if command_lower in vote_commands:
+        vote_type = vote_commands[command_lower]
+        add_vote(vote_type)
+        
+        # 检查是否需要切换模式
+        mode_switched = check_mode_switch()
+        
+        # 保存投票到CSV
+        try:
+            danmaku_saver.save_danmaku(current_time, username, original_command, 1 if mode_switched else 0)
+        except Exception as e:
+            logger.error(f"Failed to save vote to CSV: {e}")
+        
+        # 创建投票显示数据
+        vote_display = f"投票: {vote_type}"
+        if mode_switched:
+            vote_display += f" -> 切换到{current_mode}模式!"
+        
+        danmaku_data = {
+            'username': username,
+            'command': vote_display,
+            'timestamp': time.time()
+        }
+        
+        # 添加到显示队列
+        with danmaku_lock:
+            danmaku_display_queue.append(danmaku_data)
+        
+        # 广播给前端
+        broadcast_danmaku(danmaku_data)
+        
+        # 立即发送投票更新信息
+        with mode_lock:
+            vote_update = {
+                'type': 'vote_update',
+                'mode_info': {
+                    'current_mode': current_mode,
+                    'freedom_votes': freedom_votes,
+                    'order_votes': order_votes,
+                    'total_votes': len(vote_queue)
+                },
+                'mode_switched': mode_switched
+            }
+        
+        # 发送投票更新到所有SSE客户端
+        disconnected_clients = []
+        for client_queue in sse_clients:
+            try:
+                client_queue.put(vote_update)
+            except:
+                disconnected_clients.append(client_queue)
+        
+        # 清理断开的客户端
+        for client in disconnected_clients:
+            sse_clients.remove(client)
+        
+        return  # 投票指令处理完毕，直接返回
+    
     # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
     if '+' in command:
         # 按 '+' 分割组合指令，最多允许3个子指令
-        sub_commands = command.lower().split('+', 2)
+        sub_commands = command_lower.split('+', 2)
     else:
         # 按空格分割组合指令，最多允许3个子指令
-        sub_commands = command.lower().split(' ', 2)
+        sub_commands = command_lower.split(' ', 2)
     
     valid_sub_commands = []
     display_commands = []
@@ -629,10 +836,29 @@ def process_danmaku_command(username: str, command: str, room_id: str = None):
         # 生成显示用的组合指令，在+号左右添加空格
         display_command = ' + '.join(display_commands)
         
+        # 根据当前模式处理指令
+        with mode_lock:
+            if current_mode == "自由":
+                # 自由模式：直接更新最新指令
+                with latest_command_lock:
+                    if not executing_command:  # 只有在不执行时才更新
+                        latest_command = command
+                        executed = 1  # 标记为将要执行
+                        logger.info(f"Freedom mode - Updated latest command: {command}")
+                    else:
+                        executed = 0  # 标记为被忽略
+                        logger.info(f"Freedom mode - Command ignored (executing): {command}")
+            elif current_mode == "秩序":
+                # 秩序模式：添加到投票统计
+                add_order_command(command)
+                executed = 1  # 标记为已处理（加入投票）
+                logger.info(f"Order mode - Added command to voting: {command}")
+        
         # 创建结构化的弹幕数据
+        mode_prefix = f"[{current_mode}] " if current_mode else ""
         danmaku_data = {
             'username': username,
-            'command': display_command,
+            'command': mode_prefix + display_command,
             'timestamp': time.time()
         }
         
@@ -643,18 +869,9 @@ def process_danmaku_command(username: str, command: str, room_id: str = None):
         
         # 实时推送给所有SSE客户端
         broadcast_danmaku(danmaku_data)
-        
-        # 更新最新指令（覆盖之前的指令）
-        with latest_command_lock:
-            if not executing_command:  # 只有在不执行时才更新
-                latest_command = command
-                executed = 1  # 标记为将要执行
-                logger.info(f"Updated latest command: {command}")
-            else:
-                executed = 0  # 标记为被忽略
-                logger.info(f"Command ignored (executing): {command}")
     else:
         logger.info(f"Unknown command ignored: {command}")
+        executed = 0  # 标记为未执行
     
     # 保存原始指令到CSV文件
     try:
@@ -725,7 +942,33 @@ def index():
     runtime = get_runtime()
     with danmaku_lock:
         danmaku_list = list(danmaku_display_queue)  # 获取队列中的所有数据
-    return render_template('index.html', runtime=runtime, danmaku_list=danmaku_list)
+    
+    # 获取模式和投票信息
+    with mode_lock:
+        mode_info = {
+            'current_mode': current_mode,
+            'freedom_votes': freedom_votes,
+            'order_votes': order_votes,
+            'total_votes': len(vote_queue)
+        }
+    
+    # 获取秩序模式统计信息
+    democracy_info = {}
+    if current_mode == "秩序":
+        with order_lock:
+            if order_commands:
+                # 按票数排序
+                sorted_commands = sorted(order_commands.items(), key=lambda x: x[1], reverse=True)
+                democracy_info = {
+                    'commands': sorted_commands[:5],  # 只显示前5名
+                    'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
+                }
+    
+    return render_template('index.html', 
+                         runtime=runtime, 
+                         danmaku_list=danmaku_list,
+                         mode_info=mode_info,
+                         democracy_info=democracy_info)
 
 @app.route('/api/danmaku/stream')
 def danmaku_stream():
@@ -750,8 +993,32 @@ def danmaku_stream():
                     danmaku = client_queue.get(timeout=30)  # 30秒超时
                     yield f"data: {json.dumps(danmaku)}\n\n"
                 except queue.Empty:
-                    # 发送心跳包保持连接
-                    yield f"data: {json.dumps({'type': 'heartbeat', 'runtime': get_runtime()})}\n\n"
+                    # 发送心跳包保持连接，包含模式信息
+                    with mode_lock:
+                        mode_info = {
+                            'current_mode': current_mode,
+                            'freedom_votes': freedom_votes,
+                            'order_votes': order_votes,
+                            'total_votes': len(vote_queue)
+                        }
+                    
+                    democracy_info = {}
+                    if current_mode == "秩序":
+                        with order_lock:
+                            if order_commands:
+                                sorted_commands = sorted(order_commands.items(), key=lambda x: x[1], reverse=True)
+                                democracy_info = {
+                                    'commands': sorted_commands[:5],
+                                    'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
+                                }
+                    
+                    heartbeat_data = {
+                        'type': 'heartbeat', 
+                        'runtime': get_runtime(),
+                        'mode_info': mode_info,
+                        'democracy_info': democracy_info
+                    }
+                    yield f"data: {json.dumps(heartbeat_data)}\n\n"
         except GeneratorExit:
             pass
         finally:
@@ -790,10 +1057,15 @@ async def main():
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
     
-    # 启动指令执行线程
+    # 启动指令执行线程（无政府模式）
     command_thread = threading.Thread(target=execute_latest_command, daemon=True)
     command_thread.start()
-    logger.info("Started command execution thread")
+    logger.info("Started command execution thread (anarchy mode)")
+    
+    # 启动秩序模式执行线程
+    order_thread = threading.Thread(target=order_execution_thread, daemon=True)
+    order_thread.start()
+    logger.info("Started order execution thread")
     
     # 启动自动输入线程
     auto_thread = threading.Thread(target=auto_input_thread, daemon=True)
