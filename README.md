@@ -1,9 +1,14 @@
 # We-play-Pokemon
 
+<div align="center" style="font-size: 1.2em; font-weight: bold; color: #2E8B57;">
+2025-8-26-12:00 至8-28-12:00 进行48h直播测试<br>
+<span style="color: #FF69B4;">哔哩哔哩直播间：</span><a href="https://live.bilibili.com/27063247" style="color: #FF69B4; text-decoration: none;"><img src="https://www.bilibili.com/favicon.ico" alt="bilibili" style="vertical-align: middle; width: 16px; height: 16px;"> https://live.bilibili.com/27063247</a>
+</div>
+
 We-play-Pokemon 是一个基于 Python 的项目，旨在通过直播弹幕控制游戏操作，右侧显示接收到的所有合法指令，每次执行一条最新的指令。致敬Twitch Plays Pokémon。
 
 ![screenshots1](screenshots/screenshots1.jpg)
-
+![screenshots2](screenshots/screenshots2.png)
 ## 项目结构
 
 ```
