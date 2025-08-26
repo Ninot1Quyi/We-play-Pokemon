@@ -60,7 +60,7 @@
             font-size: 18px;
             text-align: center;
             margin-top: 0px;
-            margin-bottom: 2px;
+            margin-bottom: 1px;
             letter-spacing: 1px;
         }
 
@@ -112,6 +112,252 @@
             text-shadow: 1px 1px 0px #333;
             /* 确保命令文本使用FusionPixel字体 */
             font-family: 'FusionPixel', monospace;
+        }
+
+        /* 投票占比显示条 */
+        .vote-bar-container {
+            margin: 20px 0;
+            text-align: center;
+            position: relative;
+        }
+
+        .vote-bar-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0;
+        }
+        
+        .vote-labels {
+            font-family: 'fusion-pixel-12px-proportional-ko', monospace;
+            font-size: 16px;
+            color: #fff;
+            text-shadow: 1px 1px 0px #000;
+            font-weight: bold;
+            margin: 0;
+        }
+
+        .vote-bar {
+            flex: 1;
+            height: 20px;
+            background-color: white;
+            border: 2px solid #666;
+            position: relative;
+            margin: 0;
+        }
+
+        .vote-divider {
+            position: absolute;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            background-color: black;
+            transition: left 0.3s ease;
+        }
+
+        .vote-counts {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: #ccc;
+        }
+
+        /* 模式特定布局 */
+        .freedom-layout {
+            display: block;
+        }
+        
+        .order-layout {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        
+        /* 获胜指令显示 */
+        .winning-command {
+            margin: 20px 0;
+            text-align: center;
+        }
+        
+        .command-display {
+            font-family: 'fusion-pixel-12px-proportional-ko', monospace;
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 2px 2px 0px #000;
+            margin: 10px 0;
+        }
+        
+        /* 前4名指令列表 */
+        .top-commands {
+            margin: 20px 0;
+        }
+        
+        .command-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .command-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 10px;
+            margin: 2px 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            font-family: 'fusion-pixel-10px-monospaced-ko', monospace;
+            font-size: 12px;
+        }
+        
+        .command-name {
+            color: #fff;
+            font-weight: bold;
+        }
+        
+        .command-votes {
+            color: #ccc;
+        }
+        
+        /* 秩序模式下的缩短弹幕列表 */
+        .order-danmaku {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            max-height: 150px;
+            overflow: hidden;
+        }
+        
+        .order-danmaku .danmaku-item {
+            padding: 3px 10px;
+            margin: 1px 0;
+            font-size: 10px;
+        }
+
+        .democracy-layout {
+            display: none;
+        }
+
+        /* 民主模式布局 */
+        .democracy-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .winning-command {
+            text-align: center;
+            padding: 20px;
+            border: 2px solid #666;
+            background-color: #111;
+        }
+
+        .winning-command h2 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #fff;
+        }
+
+        .winning-command .command-display {
+            font-size: 32px;
+            font-weight: bold;
+            color: #ffff00;
+            margin: 10px 0;
+        }
+
+        .winning-command .vote-count {
+            font-size: 14px;
+            color: #ccc;
+        }
+
+        .top-commands {
+            border: 2px solid #666;
+            background-color: #111;
+            padding: 15px;
+        }
+
+        .top-commands h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #fff;
+            text-align: center;
+        }
+
+        .command-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .command-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            font-size: 12px;
+        }
+
+        .command-name {
+            color: #ffff00;
+        }
+
+        .command-votes {
+            color: #ccc;
+        }
+
+        .democracy-danmaku {
+            border: 2px solid #666;
+            background-color: #111;
+            padding: 15px;
+            max-height: 200px;
+        }
+
+        .democracy-danmaku h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #fff;
+            text-align: center;
+        }
+
+        .democracy-danmaku-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .democracy-danmaku-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+            padding: 1px 0;
+            font-size: 11px;
+        }
+
+        .democracy-username {
+            flex: 1;
+            text-align: left;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: calc(100% - 80px);
+        }
+
+        .democracy-command {
+            text-align: right;
+            min-width: 60px;
+            margin-left: 10px;
+            color: #ffff00;
+        }
+
+        /* 隐藏/显示类 */
+        .hidden {
+            display: none !important;
         }
 
         .refresh-info {
@@ -175,6 +421,9 @@
         let eventSource;
         let startTime = null;
         let runtimeInterval = null;
+        let currentMode = 'freedom'; // 当前模式
+        let modeInfo = {}; // 模式信息
+        let democracyInfo = {}; // 民主模式信息
         
         // 格式化运行时间为中文显示
         function formatRuntimeChinese(seconds) {
@@ -206,13 +455,86 @@
             runtimeInterval = setInterval(updateRuntime, 1000);
         }
         
-        function addDanmaku(danmaku) {
-            console.log('Adding danmaku:', danmaku);
-            const danmakuList = document.getElementById('danmaku-list');
+        
+        // 更新投票条位置
+        function updateVoteBar(freedomVotes, orderVotes) {
+            const totalVotes = freedomVotes + orderVotes;
+            let percentage = 50; // 默认50%
+            
+            if (totalVotes > 0) {
+                percentage = (freedomVotes / totalVotes) * 100;
+            }
+            
+            const divider = document.getElementById('vote-divider');
+            if (divider) {
+                divider.style.left = percentage + '%';
+            }
+            
+            // 票数显示已移除
+        }
+        
+        // 切换布局模式
+        function switchLayout(mode) {
+            const freedomLayout = document.querySelector('.freedom-layout');
+            const orderLayout = document.querySelector('.order-layout');
+            
+            if (mode === '秩序') {
+                if (freedomLayout) freedomLayout.style.display = 'none';
+                if (orderLayout) orderLayout.style.display = 'block';
+                currentMode = 'order';
+            } else {
+                if (freedomLayout) freedomLayout.style.display = 'block';
+                if (orderLayout) orderLayout.style.display = 'none';
+                currentMode = 'freedom';
+            }
+        }
+        
+        // 更新秩序模式显示
+        function updateOrderDisplay() {
+            if (currentMode !== 'order' || !democracyInfo.commands) return;
+            
+            const commands = democracyInfo.commands;
+            if (commands.length === 0) return;
+            
+            // 更新获胜指令显示
+            const winningCommand = commands[0];
+            const winningElement = document.getElementById('winning-command-text');
+            if (winningElement) {
+                winningElement.textContent = winningCommand[0];
+            }
+            
+            // 更新前4名指令列表
+            const commandList = document.getElementById('top-commands-list');
+            if (commandList) {
+                commandList.innerHTML = '';
+                
+                for (let i = 0; i < Math.min(4, commands.length); i++) {
+                    const li = document.createElement('li');
+                    li.className = 'command-item';
+                    
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'command-name';
+                    nameSpan.textContent = commands[i][0];
+                    
+                    const voteSpan = document.createElement('span');
+                    voteSpan.className = 'command-votes';
+                    voteSpan.textContent = commands[i][1];
+                    
+                    li.appendChild(nameSpan);
+                    li.appendChild(voteSpan);
+                    commandList.appendChild(li);
+                }
+            }
+        }
+        
+        // 更新秩序模式下的弹幕列表
+        function updateOrderDanmaku(danmaku) {
+            const orderDanmakuList = document.getElementById('order-danmaku-list');
+            if (!orderDanmakuList) return;
+            
             const li = document.createElement('li');
             li.className = 'danmaku-item';
             
-            // 使用 textContent 赋值更安全，避免 XSS 风险
             const usernameSpan = document.createElement('span');
             usernameSpan.className = 'username';
             usernameSpan.textContent = danmaku.username;
@@ -220,19 +542,50 @@
             const commandSpan = document.createElement('span');
             commandSpan.className = 'command';
             commandSpan.textContent = danmaku.command;
-
+            
             li.appendChild(usernameSpan);
             li.appendChild(commandSpan);
             
-            danmakuList.appendChild(li);
+            orderDanmakuList.appendChild(li);
             
-            // 保持只显示最新15条
-            while (danmakuList.children.length > 13) {
-                danmakuList.removeChild(danmakuList.firstChild);
+            // 保持只显示最新5条
+            while (orderDanmakuList.children.length > 5) {
+                orderDanmakuList.removeChild(orderDanmakuList.firstChild);
             }
+        }
+        
+        function addDanmaku(danmaku) {
+            console.log('Adding danmaku:', danmaku);
             
-            // 滚动到底部显示最新内容
-            danmakuList.scrollTop = danmakuList.scrollHeight;
+            if (currentMode === 'order') {
+                // 秩序模式：添加到秩序模式弹幕列表
+                updateOrderDanmaku(danmaku);
+            } else {
+                // 自由模式：添加到原有弹幕列表
+                const danmakuList = document.getElementById('danmaku-list');
+                const li = document.createElement('li');
+                li.className = 'danmaku-item';
+                
+                const usernameSpan = document.createElement('span');
+                usernameSpan.className = 'username';
+                usernameSpan.textContent = danmaku.username;
+                
+                const commandSpan = document.createElement('span');
+                commandSpan.className = 'command';
+                commandSpan.textContent = danmaku.command;
+
+                li.appendChild(usernameSpan);
+                li.appendChild(commandSpan);
+                
+                danmakuList.appendChild(li);
+                
+                // 保持只显示最新13条
+                while (danmakuList.children.length > 13) {
+                    danmakuList.removeChild(danmakuList.firstChild);
+                }
+                
+                danmakuList.scrollTop = danmakuList.scrollHeight;
+            }
         }
         
         function connectSSE() {
@@ -263,6 +616,28 @@
                                 const totalSeconds = parseInt(days) * 86400 + parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
                                 startTime = Math.floor(Date.now() / 1000) - totalSeconds;
                                 startRuntimeTimer();
+                            }
+                        }
+                        // 更新模式信息
+                        if (data.mode_info) {
+                            modeInfo = data.mode_info;
+                            updateVoteBar(modeInfo.freedom_votes || 0, modeInfo.order_votes || 0);
+                            if (modeInfo.current_mode !== currentMode) {
+                                switchLayout(modeInfo.current_mode);
+                            }
+                        }
+                        // 更新秩序模式信息
+                        if (data.democracy_info) {
+                            democracyInfo = data.democracy_info;
+                            updateOrderDisplay();
+                        }
+                    } else if (data.type === 'vote_update') {
+                        // 投票更新事件
+                        if (data.mode_info) {
+                            modeInfo = data.mode_info;
+                            updateVoteBar(modeInfo.freedom_votes || 0, modeInfo.order_votes || 0);
+                            if (data.mode_switched && modeInfo.current_mode !== currentMode) {
+                                switchLayout(modeInfo.current_mode);
                             }
                         }
                     } else if (data.username && data.command) {
@@ -317,14 +692,72 @@
         <h1>We Play</h1>
         <div class="subtitle">Pokémon</div>
         <div id="runtime">{{ runtime }}</div>
-        <ul id="danmaku-list">
-            {% for danmaku in danmaku_list %}
-                <li class="danmaku-item">
-                    <span class="username">{{ danmaku['username'] }}</span>
-                    <span class="command">{{ danmaku['command'] }}</span>
-                </li>
-            {% endfor %}
-        </ul>
+        
+        <!-- 投票占比显示条 -->
+        <div class="vote-bar-container">
+            <div class="vote-bar-wrapper">
+                <span class="vote-labels">自由</span>
+                <div class="vote-bar">
+                    <div id="vote-divider" class="vote-divider" style="left: 50%;"></div>
+                </div>
+                <span class="vote-labels">秩序</span>
+            </div>
+        </div>
+        
+        <!-- 自由模式布局 -->
+        <div class="freedom-layout" {% if mode_info.current_mode == '秩序' %}style="display: none;"{% endif %}>
+            <ul id="danmaku-list">
+                {% for danmaku in danmaku_list %}
+                    <li class="danmaku-item">
+                        <span class="username">{{ danmaku['username'] }}</span>
+                        <span class="command">{{ danmaku['command'] }}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
+        
+        <!-- 秩序模式布局 -->
+        <div class="order-layout" {% if mode_info.current_mode != '秩序' %}style="display: none;"{% endif %}>
+            <!-- 获胜指令大显示 -->
+            <div class="winning-command">
+                <div id="winning-command-text" class="command-display">
+                    {% if democracy_info.commands %}
+                        {{ democracy_info.commands[0][0] }}
+                    {% else %}
+                        等待投票...
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- 前4名指令列表 -->
+            <div class="top-commands">
+                <ul id="top-commands-list" class="command-list">
+                    {% if democracy_info.commands %}
+                        {% for command, votes in democracy_info.commands[:4] %}
+                            <li class="command-item">
+                                <span class="command-name">{{ command }}</span>
+                                <span class="command-votes">{{ votes }}</span>
+                            </li>
+                        {% endfor %}
+                    {% else %}
+                        <li class="command-item">
+                            <span class="command-name">等待投票...</span>
+                            <span class="command-votes">0</span>
+                        </li>
+                    {% endif %}
+                </ul>
+            </div>
+            
+            <!-- 缩短的弹幕列表 -->
+            <ul id="order-danmaku-list" class="order-danmaku">
+                {% for danmaku in danmaku_list[-5:] %}
+                    <li class="danmaku-item">
+                        <span class="username">{{ danmaku['username'] }}</span>
+                        <span class="command">{{ danmaku['command'] }}</span>
+                    </li>
+                {% endfor %}
+            </ul>
+        </div>
         
         <div class="instructions">
             <div style="text-align: center; line-height: 1.5;">
