@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twitch Plays Pokemon</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        @font-face {
+            font-family: 'FusionPixel';
+            /* 确保字体文件路径正确 */
+            src: url('/static/fusion-pixel-10px-monospaced-ko.ttf.woff') format('woff');
+            font-display: swap;
+            /* 移除unicode-range限制，让字体支持所有字符包括英文和数字 */
+        }
+
+        body {
+            background-color: black;
+            color: white;
+            /* 将 FusionPixel 放在前面，优先用于中文 */
+            font-family: 'FusionPixel', 'Press Start 2P', monospace;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+            font-size: 14px;
+            /* 保持像素风格渲染 */
+            image-rendering: pixelated;
+            -webkit-font-smoothing: none;
+            font-smooth: never;
+            text-rendering: optimizeSpeed;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding-bottom: 60px;
+        }
+
+        h1 {
+            font-size: 28px;
+            text-align: center;
+            margin-bottom: 0px;
+            letter-spacing: 2px;
+        }
+
+        .subtitle {
+            font-size: 24px;
+            text-align: center;
+            margin-bottom: 3px;
+            letter-spacing: 1px;
+        }
+        
+        /* 标题强制使用英文字体，避免回退 */
+        h1,
+        .subtitle {
+            font-family: 'Press Start 2P', monospace;
+        }
+
+        #runtime {
+            font-size: 18px;
+            text-align: center;
+            margin-top: 0px;
+            margin-bottom: 2px;
+            letter-spacing: 1px;
+        }
+
+        #danmaku-list {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+            max-height: 600px;
+            overflow-y: auto;
+            scroll-behavior: smooth;
+            /* 确保弹幕列表使用FusionPixel字体 */
+            font-family: 'FusionPixel', monospace;
+        }
+
+        /* 这是关键的修改部分 */
+        .danmaku-item {
+            display: flex;
+            justify-content: space-between;
+            /* * [核心修改]
+             * 将 align-items 从 baseline 改为 center。
+             * 这使得 username 和 command 两个 span 容器在垂直方向上居中对齐，
+             * 解决了因字体基线不同导致的错位问题。
+             */
+            align-items: center; 
+            margin-bottom: 2px;
+            padding: 1px 0;
+            /* 统一设置字体大小和行高以获得更好的一致性 */
+            font-size: 14px;
+            line-height: 1.1;
+        }
+
+        .username {
+            flex: 1;
+            text-align: left;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            /* 稍微调整一下最大宽度，给右侧留出足够空间 */
+            max-width: calc(100% - 100px);
+            /* 确保用户名使用FusionPixel字体 */
+            font-family: 'FusionPixel', monospace;
+        }
+
+        .command {
+            text-align: right;
+            min-width: 80px;
+            margin-left: 20px;
+            font-weight: bold;
+            text-shadow: 1px 1px 0px #333;
+            /* 确保命令文本使用FusionPixel字体 */
+            font-family: 'FusionPixel', monospace;
+        }
+
+        .refresh-info {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            font-size: 10px;
+            opacity: 0.7;
+        }
+
+        .instructions {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            margin: 0;
+            padding: 8px 15px;
+            border-top: 2px dotted #666;
+            background-color: black;
+            font-family: 'FusionPixel', monospace;
+            font-size: 10px;
+            line-height: 1.4;
+            z-index: 100;
+        }
+
+        .instructions h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #fff;
+            text-align: center;
+        }
+
+        .instructions .command-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .instructions .command-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+
+        .instructions .command-key {
+            color: #ffff00;
+        }
+
+        .instructions .command-desc {
+            color: #cccccc;
+        }
+
+        /* * [代码清理] 
+         * 之前复杂的、带有 !important 的选择器已被移除。
+         * 字体和渲染相关的属性已在 body 和 .danmaku-item 中继承，无需重复强制设置。
+         */
+
+    </style>
+    <script>
+        let eventSource;
+        let startTime = null;
+        let runtimeInterval = null;
+        
+        // 格式化运行时间为中文显示
+        function formatRuntimeChinese(seconds) {
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            // 始终显示所有时间单位，即使为0
+            let result = days + '天 ' + hours + '时 ' + minutes + '分 ' + secs + '秒';
+            
+            return result;
+        }
+        
+        // 更新运行时间显示
+        function updateRuntime() {
+            if (startTime) {
+                const currentTime = Math.floor(Date.now() / 1000);
+                const runtime = currentTime - startTime;
+                document.getElementById('runtime').textContent = formatRuntimeChinese(runtime);
+            }
+        }
+        
+        // 启动运行时间计时器
+        function startRuntimeTimer() {
+            if (runtimeInterval) {
+                clearInterval(runtimeInterval);
+            }
+            runtimeInterval = setInterval(updateRuntime, 1000);
+        }
+        
+        function addDanmaku(danmaku) {
+            console.log('Adding danmaku:', danmaku);
+            const danmakuList = document.getElementById('danmaku-list');
+            const li = document.createElement('li');
+            li.className = 'danmaku-item';
+            
+            // 使用 textContent 赋值更安全，避免 XSS 风险
+            const usernameSpan = document.createElement('span');
+            usernameSpan.className = 'username';
+            usernameSpan.textContent = danmaku.username;
+            
+            const commandSpan = document.createElement('span');
+            commandSpan.className = 'command';
+            commandSpan.textContent = danmaku.command;
+
+            li.appendChild(usernameSpan);
+            li.appendChild(commandSpan);
+            
+            danmakuList.appendChild(li);
+            
+            // 保持只显示最新15条
+            while (danmakuList.children.length > 13) {
+                danmakuList.removeChild(danmakuList.firstChild);
+            }
+            
+            // 滚动到底部显示最新内容
+            danmakuList.scrollTop = danmakuList.scrollHeight;
+        }
+        
+        function connectSSE() {
+            console.log('Connecting to SSE stream...');
+            eventSource = new EventSource('/api/danmaku/stream');
+            
+            eventSource.onopen = function(event) {
+                console.log('SSE connection opened');
+            };
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Received SSE data:', data);
+                    
+                    if (data.type === 'heartbeat') {
+                        // 从服务器获取开始时间并启动本地计时器
+                        if (data.start_time && !startTime) {
+                            startTime = data.start_time;
+                            startRuntimeTimer();
+                        }
+                        // 如果服务器提供了运行时间，解析并设置开始时间
+                        if (data.runtime && !startTime) {
+                            // 从运行时间字符串解析秒数
+                            const runtimeMatch = data.runtime.match(/(\d+)d\s*(\d+)h\s*(\d+)m\s*(\d+)s/);
+                            if (runtimeMatch) {
+                                const [, days, hours, minutes, seconds] = runtimeMatch;
+                                const totalSeconds = parseInt(days) * 86400 + parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
+                                startTime = Math.floor(Date.now() / 1000) - totalSeconds;
+                                startRuntimeTimer();
+                            }
+                        }
+                    } else if (data.username && data.command) {
+                        // 这是弹幕数据
+                        addDanmaku(data);
+                    }
+                } catch (error) {
+                    console.error('Error parsing SSE data:', error);
+                }
+            };
+            
+            eventSource.onerror = function(event) {
+                console.error('SSE connection error:', event);
+                eventSource.close();
+                
+                // 3秒后重新连接
+                setTimeout(connectSSE, 3000);
+            };
+        }
+        
+        // 页面加载完成后连接SSE并初始化运行时间
+        document.addEventListener('DOMContentLoaded', function() {
+            // 如果页面已经有运行时间，解析并启动计时器
+            const runtimeElement = document.getElementById('runtime');
+            const currentRuntime = runtimeElement.textContent;
+            
+            // 尝试解析现有的运行时间格式 (如果是英文格式)
+            const runtimeMatch = currentRuntime.match(/(\d+)d\s*(\d+)h\s*(\d+)m\s*(\d+)s/);
+            if (runtimeMatch) {
+                const [, days, hours, minutes, seconds] = runtimeMatch;
+                const totalSeconds = parseInt(days) * 86400 + parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
+                startTime = Math.floor(Date.now() / 1000) - totalSeconds;
+                startRuntimeTimer();
+            }
+            
+            connectSSE();
+        });
+        
+        // 页面卸载时关闭连接和计时器
+        window.addEventListener('beforeunload', function() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            if (runtimeInterval) {
+                clearInterval(runtimeInterval);
+            }
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>We Play</h1>
+        <div class="subtitle">Pokémon</div>
+        <div id="runtime">{{ runtime }}</div>
+        <ul id="danmaku-list">
+            {% for danmaku in danmaku_list %}
+                <li class="danmaku-item">
+                    <span class="username">{{ danmaku['username'] }}</span>
+                    <span class="command">{{ danmaku['command'] }}</span>
+                </li>
+            {% endfor %}
+        </ul>
+        
+        <div class="instructions">
+            <div style="text-align: center; line-height: 1.5;">
+                <span class="command-key">ikjl</span> 移动 | <span class="command-key">A/B</span> 确认/取消 | <span class="command-key">开始/选择</span> 功能键
+            </div>
+            <div style="text-align: center; font-size: 9px; color: #888;">
+                支持按键+数字组合，如：上3、a5（重复执行）
+            </div>
+        </div>
+    </div>
+</body>
+</html>
