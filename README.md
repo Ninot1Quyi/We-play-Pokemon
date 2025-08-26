@@ -1,0 +1,74 @@
+# We-play-Pokemon
+
+We-play-Pokemon 是一个基于 Python 的项目，旨在通过直播弹幕控制游戏操作，右侧显示接收到的所有合法指令，每次执行一条最新的指令。致敬Twitch Plays Pokémon。
+
+![screenshots1](screenshots/screenshots1.jpg)
+
+## 项目结构
+
+```
+We-play-Pokemon/
+├── bilibili_mgba_controller.py  # 主控制器脚本
+├── close_port_5000.bat          # 关闭端口的批处理文件
+├── pyproject.toml              # 项目配置文件
+├── README.md                   # 项目说明文件
+├── requirements.txt            # Python 依赖包列表
+├── start_time.txt              # 启动时间记录
+├── uv.lock                     # 锁文件
+├── blivedm/                    # 弹幕处理模块
+│   ├── __init__.py
+│   ├── handlers.py
+│   ├── utils.py
+│   └── clients/
+│       ├── __init__.py
+│       ├── open_live.py
+│       ├── web.py
+│       └── ws_base.py
+├── models/                     # 数据模型模块
+│   ├── __init__.py
+│   ├── open_live.py
+│   └── web.py
+├── static/                     # 静态资源
+│   ├── fusion-pixel-10px-monospaced-ko.ttf.woff
+│   ├── fusion-pixel-10px-proportional-ko.ttf.woff
+│   ├── fusion-pixel-12px-monospaced-ko.ttf.woff
+│   ├── fusion-pixel-12px-proportional-ko.otf.woff
+│   └── fusion-pixel-8px-monospaced-ko.ttf.woff
+└── templates/                  # HTML 模板
+    └── index.html
+```
+
+## 安装与运行
+
+### 环境依赖
+
+请确保已安装以下工具：
+- Python 3.12 或更高版本
+- pip
+
+### 安装步骤
+
+1. 克隆项目到本地：
+   ```bash
+   git clone https://github.com/Ninot1Quyi/We-play-Pokemon.git
+   ```
+
+2. 进入项目目录：
+
+3. 安装依赖：
+
+
+### 运行项目
+
+运行主脚本：
+```bash
+python bilibili_mgba_controller.py
+```
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request 来帮助我们改进项目。
+
+## 协议
+
+本项目使用 [MIT 协议](./LICENSE)。
