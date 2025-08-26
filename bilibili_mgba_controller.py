@@ -19,6 +19,7 @@ import http.cookies
 import logging
 import os
 import queue
+import random
 import threading
 import time
 from datetime import datetime, timedelta
@@ -71,12 +72,16 @@ MGBA_WINDOW_TITLE = "mGBA - POKEMON"
 COMMAND_TO_KEY = {
     '上': 'up',
     'i': 'up',
+    'up': 'up',
     '下': 'down',
     'k': 'down',
+    'down': 'down',
     '左': 'left',
     'j': 'left',
+    'left': 'left',
     '右': 'right',
     'l': 'right',
+    'right': 'right',
     'a': 'x',
     'b': 'z',
     '开始': 'enter',
@@ -166,6 +171,13 @@ latest_command = None  # 最新的指令
 latest_command_lock = threading.Lock()  # 最新指令锁
 executing_command = False  # 是否正在执行指令
 execution_lock = threading.Lock()  # 执行锁
+
+# 自动输入机制
+last_command_time = time.time()  # 最后一次接收指令的时间
+auto_input_lock = threading.Lock()  # 自动输入锁
+AUTO_INPUT_TIMEOUT = 120  # 120秒无操作自动输入
+AUTO_INPUT_INTERVAL = 10  # 无人值守状态每10秒输入一次
+auto_mode = False  # 是否处于自动模式
 
 app = Flask(__name__)
 window_lock = threading.Lock()  # 线程锁
@@ -362,42 +374,132 @@ def press_key(key: str, duration: float = 0.1):
     except Exception as e:
         logger.error(f"Failed to press key {key}: {e}")
 
+def generate_random_command():
+    """生成随机指令，从l0-9+i0-9+j0-9+i0-9中随机选择1-3个"""
+    # 定义可用的基础指令
+    base_commands = ['l', 'i', 'j', 'i']  # 右、上、左、上
+    
+    # 随机选择1-3个指令
+    selected_commands = []
+    for _ in range(random.randint(1, 3)):
+        # 随机选择基础指令
+        base_cmd = random.choice(base_commands)
+        # 随机选择重复次数 0-9
+        repeat_count = random.randint(0, 9)
+        # 组合指令
+        if repeat_count == 0:
+            selected_commands.append(base_cmd)
+        else:
+            selected_commands.append(f"{base_cmd}{repeat_count}")
+    
+    # 用+连接指令
+    command = '+'.join(selected_commands)
+    logger.info(f"Generated random command: {command}")
+    return command
+
+def auto_input_thread():
+    """自动输入线程函数"""
+    global last_command_time, auto_mode, latest_command
+    
+    while True:
+        current_time = time.time()
+        
+        with auto_input_lock:
+            time_since_last = current_time - last_command_time
+            
+            # 检查是否需要进入自动模式
+            if not auto_mode and time_since_last >= AUTO_INPUT_TIMEOUT:
+                auto_mode = True
+                logger.info("Entering auto mode - no commands received for 120 seconds")
+            
+            # 如果处于自动模式，每10秒输入一次随机指令
+            if auto_mode and time_since_last >= AUTO_INPUT_TIMEOUT:
+                # 检查是否到了下一次自动输入的时间
+                time_in_auto_mode = time_since_last - AUTO_INPUT_TIMEOUT
+                if time_in_auto_mode % AUTO_INPUT_INTERVAL < 1:  # 允许1秒的误差
+                    # 生成随机指令
+                    random_command = generate_random_command()
+                    
+                    # 设置为最新指令并执行
+                    with latest_command_lock:
+                        if not executing_command:
+                            latest_command = random_command
+                            logger.info(f"Auto-generated command: {random_command}")
+                            
+                            # 创建自动生成的弹幕数据用于显示
+                            danmaku_data = {
+                                'username': 'Ninot-Quyi',
+                                'command': random_command.replace('+', ' + '),  # 添加空格显示
+                                'timestamp': time.time()
+                            }
+                            
+                            # 添加到显示队列
+                            with danmaku_lock:
+                                danmaku_display_queue.append(danmaku_data)
+                            
+                            # 广播给前端
+                            broadcast_danmaku(danmaku_data)
+        
+        time.sleep(1)  # 每秒检查一次
+
+
 def control_mgba(command: str):
-    """根据弹幕命令控制 mGBA（大小写不敏感，支持按键+数字）"""
+    """根据弹幕命令控制 mGBA（支持组合指令如 a3+b3+i2 或 a3 b3 i2）"""
     global executing_command
     
     command = command.strip().lower()
     
-    # 检查是否是按键+数字格式
-    repeat_count = 1
-    base_command = command
+    # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
+    if '+' in command:
+        # 按 '+' 分割组合指令，最多3个子指令
+        sub_commands = command.split('+', 2)
+    else:
+        # 按空格分割组合指令，最多3个子指令
+        sub_commands = command.split(' ', 2)
     
-    # 如果命令以数字结尾，提取数字
-    if command and command[-1].isdigit():
-        digit = command[-1]
-        base_command = command[:-1]
-        repeat_count = int(digit)
-        if repeat_count < 1 or repeat_count > 9:
-            repeat_count = 1
+    valid_sub_commands = []
     
-    key = COMMAND_TO_KEY.get(base_command)
-    if key:
-        # 获取执行锁，防止指令执行被打断
+    # 解析每个子指令
+    for sub_cmd in sub_commands:
+        sub_cmd = sub_cmd.strip()
+        if not sub_cmd:
+            continue
+        
+        # 检查是否是按键+数字格式
+        repeat_count = 1
+        base_command = sub_cmd
+        
+        if sub_cmd and sub_cmd[-1].isdigit():
+            digit = sub_cmd[-1]
+            base_command = sub_cmd[:-1]
+            repeat_count = int(digit)
+            if repeat_count < 1 or repeat_count > 9:
+                repeat_count = 1
+        
+        if base_command in COMMAND_TO_KEY:
+            valid_sub_commands.append((base_command, repeat_count))
+    
+    # 如果有合法子指令，依次执行
+    if valid_sub_commands:
         with execution_lock:
             executing_command = True
             try:
                 if not activate_mgba_window():
                     logger.warning("mGBA window not found or activation failed, skipping key press")
                 else:
-                    for i in range(repeat_count):
-                        press_key(key)
-                        if i < repeat_count - 1:  # 不是最后一次按键
-                            time.sleep(0.5)  # 按键间隔0.5秒
-                    logger.info(f"Executed command '{base_command}' {repeat_count} times")
+                    for base_command, repeat_count in valid_sub_commands:
+                        key = COMMAND_TO_KEY[base_command]
+                        for i in range(repeat_count):
+                            press_key(key)
+                            if i < repeat_count - 1:  # 不是最后一次按键
+                                time.sleep(0.25)  # 按键间隔0.5秒
+                        time.sleep(0.5)  # 指令之间的间隔
+                    logger.info(f"Executed combined command: {command}")
             finally:
                 executing_command = False
     else:
-        logger.warning(f"Unknown command: {command}")
+        logger.warning(f"No valid commands in: {command}")
+
 
 async def run_bilibili_wss_client():
     """运行 Bilibili WSS 模式弹幕监听"""
@@ -465,8 +567,15 @@ def execute_latest_command():
         time.sleep(0.1)  # 检查间隔
 
 def process_danmaku_command(username: str, command: str, room_id: str = None):
-    """处理弹幕指令的通用函数"""
-    global latest_command
+    """处理弹幕指令的通用函数，支持组合指令如 a3+b3+i2 或 a3 b3 i2"""
+    global latest_command, last_command_time, auto_mode
+    
+    # 更新最后指令时间并退出自动模式
+    with auto_input_lock:
+        last_command_time = time.time()
+        if auto_mode:
+            auto_mode = False
+            logger.info("Exiting auto mode - received new danmaku command")
     
     command = command.strip()
     original_command = command  # 保存原始指令用于CSV记录
@@ -474,25 +583,50 @@ def process_danmaku_command(username: str, command: str, room_id: str = None):
     # 获取当前时间戳（精确到秒）
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # 检查是否是合法指令
-    base_command = command.lower()
-    repeat_count = 1
-    executed = 0  # 默认未执行
+    # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
+    if '+' in command:
+        # 按 '+' 分割组合指令，最多允许3个子指令
+        sub_commands = command.lower().split('+', 2)
+    else:
+        # 按空格分割组合指令，最多允许3个子指令
+        sub_commands = command.lower().split(' ', 2)
     
-    # 处理按键+数字格式
-    if command and command[-1].isdigit():
-        digit = command[-1]
-        base_command = command[:-1].lower()
-        repeat_count = int(digit)
-        if repeat_count < 1 or repeat_count > 9:
-            repeat_count = 1
+    valid_sub_commands = []
+    display_commands = []
     
-    # 检查基础命令是否合法
-    if base_command in COMMAND_TO_KEY:
-        key = COMMAND_TO_KEY[base_command]
-        display_command = KEY_TO_DISPLAY.get(key, base_command)
-        if repeat_count > 1:
-            display_command += str(repeat_count)
+    # 处理每个子指令
+    for sub_cmd in sub_commands:
+        sub_cmd = sub_cmd.strip()
+        if not sub_cmd:
+            continue
+        
+        # 检查是否是按键+数字格式
+        repeat_count = 1
+        base_command = sub_cmd
+        
+        if sub_cmd and sub_cmd[-1].isdigit():
+            digit = sub_cmd[-1]
+            base_command = sub_cmd[:-1]
+            repeat_count = int(digit)
+            if repeat_count < 1 or repeat_count > 9:
+                repeat_count = 1
+        
+        # 验证基础命令是否合法
+        if base_command in COMMAND_TO_KEY:
+            valid_sub_commands.append((base_command, repeat_count))
+            key = COMMAND_TO_KEY[base_command]
+            display_cmd = KEY_TO_DISPLAY.get(key, base_command)
+            if repeat_count > 1:
+                display_cmd += str(repeat_count)
+            display_commands.append(display_cmd)
+    
+    # 初始化executed变量
+    executed = 0  # 默认为未执行
+    
+    # 如果有合法子指令
+    if valid_sub_commands:
+        # 生成显示用的组合指令，在+号左右添加空格
+        display_command = ' + '.join(display_commands)
         
         # 创建结构化的弹幕数据
         danmaku_data = {
@@ -516,15 +650,16 @@ def process_danmaku_command(username: str, command: str, room_id: str = None):
                 executed = 1  # 标记为将要执行
                 logger.info(f"Updated latest command: {command}")
             else:
+                executed = 0  # 标记为被忽略
                 logger.info(f"Command ignored (executing): {command}")
-        
-        # 只保存合法指令到CSV文件
-        try:
-            danmaku_saver.save_danmaku(current_time, username, original_command, executed)
-        except Exception as e:
-            logger.error(f"Failed to save danmaku to CSV: {e}")
     else:
         logger.info(f"Unknown command ignored: {command}")
+    
+    # 保存原始指令到CSV文件
+    try:
+        danmaku_saver.save_danmaku(current_time, username, original_command, executed)
+    except Exception as e:
+        logger.error(f"Failed to save danmaku to CSV: {e}")
 
 class DanmakuHandler(blivedm.BaseHandler):
     """处理 Bilibili WSS 模式直播间消息"""
@@ -658,6 +793,11 @@ async def main():
     command_thread = threading.Thread(target=execute_latest_command, daemon=True)
     command_thread.start()
     logger.info("Started command execution thread")
+    
+    # 启动自动输入线程
+    auto_thread = threading.Thread(target=auto_input_thread, daemon=True)
+    auto_thread.start()
+    logger.info("Started auto input thread")
     
     try:
         await run_bilibili_client()
