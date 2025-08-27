@@ -20,7 +20,7 @@
             /* 将 FusionPixel 放在前面，优先用于中文 */
             font-family: 'FusionPixel', 'Press Start 2P', monospace;
             margin: 0;
-            padding: 20px;
+            padding: 10px 20px 20px 20px;
             line-height: 1.6;
             font-size: 14px;
             /* 保持像素风格渲染 */
@@ -28,6 +28,18 @@
             -webkit-font-smoothing: none;
             font-smooth: never;
             text-rendering: optimizeSpeed;
+            /* 隐藏滚动条 */
+            overflow: hidden;
+        }
+        
+        /* 隐藏所有滚动条 */
+        ::-webkit-scrollbar {
+            display: none;
+        }
+        
+        /* 对于Firefox */
+        html {
+            scrollbar-width: none;
         }
 
         .container {
@@ -39,6 +51,7 @@
         h1 {
             font-size: 28px;
             text-align: center;
+            margin-top: 0px;
             margin-bottom: 0px;
             letter-spacing: 2px;
         }
@@ -46,7 +59,7 @@
         .subtitle {
             font-size: 24px;
             text-align: center;
-            margin-bottom: 3px;
+            margin-bottom: 0px;
             letter-spacing: 1px;
         }
         
@@ -60,7 +73,7 @@
             font-size: 18px;
             text-align: center;
             margin-top: 0px;
-            margin-bottom: 1px;
+            margin-bottom: 0px;
             letter-spacing: 1px;
         }
 
@@ -116,7 +129,7 @@
 
         /* 投票占比显示条 */
         .vote-bar-container {
-            margin: 20px 0;
+            margin: 0;
             text-align: center;
             position: relative;
         }
@@ -126,24 +139,37 @@
             align-items: center;
             gap: 10px;
             margin: 0;
+            padding: 0;
         }
         
         .vote-labels {
-            font-family: 'fusion-pixel-12px-proportional-ko', monospace;
+            font-family: 'FusionPixel', 'Press Start 2P', monospace;
             font-size: 16px;
             color: #fff;
             text-shadow: 1px 1px 0px #000;
             font-weight: bold;
             margin: 0;
+            image-rendering: pixelated;
+            -webkit-font-smoothing: none;
+            font-smooth: never;
         }
 
         .vote-bar {
             flex: 1;
-            height: 20px;
+            height: 14px;
             background-color: white;
-            border: 2px solid #666;
+            border: none;
             position: relative;
             margin: 0;
+            image-rendering: pixelated;
+            background-image: 
+                linear-gradient(90deg, #666 0px, #666 2px, transparent 2px),
+                linear-gradient(90deg, #666 0px, #666 2px, transparent 2px),
+                linear-gradient(0deg, #666 0px, #666 2px, transparent 2px),
+                linear-gradient(0deg, #666 0px, #666 2px, transparent 2px);
+            background-position: 0 0, 0 100%, 0 0, 100% 0;
+            background-size: 100% 2px, 100% 2px, 2px 100%, 2px 100%;
+            background-repeat: no-repeat;
         }
 
         .vote-divider {
@@ -153,6 +179,8 @@
             height: 100%;
             background-color: black;
             transition: left 0.3s ease;
+            image-rendering: pixelated;
+            box-shadow: 1px 0px 0px #333;
         }
 
         .vote-counts {
@@ -175,22 +203,27 @@
         
         /* 获胜指令显示 */
         .winning-command {
-            margin: 20px 0;
+            margin: 0px 0;
             text-align: center;
         }
         
         .command-display {
-            font-family: 'fusion-pixel-12px-proportional-ko', monospace;
-            font-size: 24px;
-            font-weight: bold;
+            font-family: 'FusionPixel', monospace;
+            font-size: 14px;
             color: #fff;
-            text-shadow: 2px 2px 0px #000;
-            margin: 10px 0;
+            margin: 2px 0;
+            /* 保持像素风格渲染 */
+            image-rendering: pixelated;
+            -webkit-font-smoothing: none;
+            font-smooth: never;
+            text-rendering: optimizeSpeed;
+            line-height: 1.1;
         }
         
-        /* 前4名指令列表 */
+        /* 前3名指令列表 */
         .top-commands {
-            margin: 20px 0;
+            margin: 2px 0;
+            padding: 0;
         }
         
         .command-list {
@@ -203,40 +236,56 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 5px 10px;
-            margin: 2px 0;
-            background-color: rgba(255, 255, 255, 0.1);
-            border-radius: 3px;
-            font-family: 'fusion-pixel-10px-monospaced-ko', monospace;
-            font-size: 12px;
+            padding: 1px 10px;
+            margin-bottom: 2px;
+            font-family: 'FusionPixel', monospace;
+            font-size: 14px;
+            line-height: 1.1;
+            /* 保持像素风格渲染 */
+            image-rendering: pixelated;
+            -webkit-font-smoothing: none;
+            font-smooth: never;
+            text-rendering: optimizeSpeed;
         }
         
         .command-name {
+            flex: 1;
+            text-align: left;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: calc(100% - 100px);
             color: #fff;
             font-weight: bold;
         }
         
         .command-votes {
+            text-align: right;
+            min-width: 80px;
+            margin-left: 20px;
             color: #ccc;
+            font-weight: bold;
+            text-shadow: 1px 1px 0px #333;
         }
         
         /* 秩序模式下的缩短弹幕列表 */
         .order-danmaku {
             list-style: none;
-            padding: 0;
+            padding: 2px;
             margin: 0;
             flex: 1;
             display: flex;
             flex-direction: column;
             justify-content: flex-end;
-            max-height: 150px;
+            max-height: 200px;
             overflow: hidden;
         }
         
         .order-danmaku .danmaku-item {
-            padding: 3px 10px;
+            padding: 1px 0px;
             margin: 1px 0;
-            font-size: 10px;
+            font-size: 14px;
+            line-height: 1.1;
         }
 
         .democracy-layout {
@@ -252,22 +301,21 @@
 
         .winning-command {
             text-align: center;
-            padding: 20px;
-            border: 2px solid #666;
-            background-color: #111;
+            padding: 2px;
+
         }
 
         .winning-command h2 {
-            margin: 0 0 10px 0;
+            margin: 0 0 0px 0;
             font-size: 16px;
             color: #fff;
         }
 
         .winning-command .command-display {
-            font-size: 32px;
+            font-size: 14px;
             font-weight: bold;
-            color: #ffff00;
-            margin: 10px 0;
+            color: #fff;
+            margin: 2px 0;
         }
 
         .winning-command .vote-count {
@@ -276,13 +324,12 @@
         }
 
         .top-commands {
-            border: 2px solid #666;
-            background-color: #111;
-            padding: 15px;
+
+            padding: 0px;
         }
 
         .top-commands h3 {
-            margin: 0 0 10px 0;
+            margin: 0 0 0px 0;
             font-size: 14px;
             color: #fff;
             text-align: center;
@@ -302,7 +349,7 @@
         }
 
         .command-name {
-            color: #ffff00;
+            color: #fff;
         }
 
         .command-votes {
@@ -374,7 +421,7 @@
             left: 0;
             right: 0;
             margin: 0;
-            padding: 8px 15px;
+            padding: 2px 2px;
             border-top: 2px dotted #666;
             background-color: black;
             font-family: 'FusionPixel', monospace;
@@ -384,7 +431,7 @@
         }
 
         .instructions h3 {
-            margin: 0 0 10px 0;
+            margin: 0 0 1px 0;
             font-size: 14px;
             color: #fff;
             text-align: center;
@@ -394,7 +441,7 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 8px;
-            margin-top: 10px;
+            margin-top: 1px;
         }
 
         .instructions .command-item {
@@ -477,12 +524,51 @@
         function switchLayout(mode) {
             const freedomLayout = document.querySelector('.freedom-layout');
             const orderLayout = document.querySelector('.order-layout');
+            const freedomDanmakuList = document.getElementById('danmaku-list');
+            const orderDanmakuList = document.getElementById('order-danmaku-list');
             
             if (mode === '秩序') {
+                // 从自由模式切换到秩序模式
+                if (currentMode === 'freedom' && freedomDanmakuList && orderDanmakuList) {
+                    // 移动弹幕内容：取自由模式列表的最后9条
+                    const freedomItems = Array.from(freedomDanmakuList.children);
+                    const itemsToMove = freedomItems.slice(-9); // 取最后9条
+                    
+                    // 清空秩序模式列表
+                    orderDanmakuList.innerHTML = '';
+                    
+                    // 移动弹幕项到秩序模式列表
+                    itemsToMove.forEach(item => {
+                        const clonedItem = item.cloneNode(true);
+                        orderDanmakuList.appendChild(clonedItem);
+                    });
+                    
+                    // 清空自由模式列表
+                    freedomDanmakuList.innerHTML = '';
+                }
+                
                 if (freedomLayout) freedomLayout.style.display = 'none';
                 if (orderLayout) orderLayout.style.display = 'block';
                 currentMode = 'order';
             } else {
+                // 从秩序模式切换到自由模式
+                if (currentMode === 'order' && freedomDanmakuList && orderDanmakuList) {
+                    // 移动弹幕内容：取秩序模式列表的所有内容
+                    const orderItems = Array.from(orderDanmakuList.children);
+                    
+                    // 清空自由模式列表
+                    freedomDanmakuList.innerHTML = '';
+                    
+                    // 移动弹幕项到自由模式列表
+                    orderItems.forEach(item => {
+                        const clonedItem = item.cloneNode(true);
+                        freedomDanmakuList.appendChild(clonedItem);
+                    });
+                    
+                    // 清空秩序模式列表
+                    orderDanmakuList.innerHTML = '';
+                }
+                
                 if (freedomLayout) freedomLayout.style.display = 'block';
                 if (orderLayout) orderLayout.style.display = 'none';
                 currentMode = 'freedom';
@@ -508,7 +594,7 @@
             if (commandList) {
                 commandList.innerHTML = '';
                 
-                for (let i = 0; i < Math.min(4, commands.length); i++) {
+                for (let i = 0; i < Math.min(3, commands.length); i++) {
                     const li = document.createElement('li');
                     li.className = 'command-item';
                     
@@ -519,6 +605,24 @@
                     const voteSpan = document.createElement('span');
                     voteSpan.className = 'command-votes';
                     voteSpan.textContent = commands[i][1];
+                    
+                    li.appendChild(nameSpan);
+                    li.appendChild(voteSpan);
+                    commandList.appendChild(li);
+                }
+                
+                // 填充剩余空位为空行
+                for (let i = commands.length; i < 3; i++) {
+                    const li = document.createElement('li');
+                    li.className = 'command-item';
+                    
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'command-name';
+                    nameSpan.innerHTML = '&nbsp;';
+                    
+                    const voteSpan = document.createElement('span');
+                    voteSpan.className = 'command-votes';
+                    voteSpan.innerHTML = '&nbsp;';
                     
                     li.appendChild(nameSpan);
                     li.appendChild(voteSpan);
@@ -548,8 +652,8 @@
             
             orderDanmakuList.appendChild(li);
             
-            // 保持只显示最新5条
-            while (orderDanmakuList.children.length > 5) {
+            // 保持只显示最新9条
+            while (orderDanmakuList.children.length > 9) {
                 orderDanmakuList.removeChild(orderDanmakuList.firstChild);
             }
         }
@@ -640,6 +744,12 @@
                                 switchLayout(modeInfo.current_mode);
                             }
                         }
+                    } else if (data.type === 'democracy_update') {
+                        // 秩序模式实时更新事件
+                        if (data.democracy_info) {
+                            democracyInfo = data.democracy_info;
+                            updateOrderDisplay();
+                        }
                     } else if (data.username && data.command) {
                         // 这是弹幕数据
                         addDanmaku(data);
@@ -692,7 +802,6 @@
         <h1>We Play</h1>
         <div class="subtitle">Pokémon</div>
         <div id="runtime">{{ runtime }}</div>
-        
         <!-- 投票占比显示条 -->
         <div class="vote-bar-container">
             <div class="vote-bar-wrapper">
@@ -724,7 +833,7 @@
                     {% if democracy_info.commands %}
                         {{ democracy_info.commands[0][0] }}
                     {% else %}
-                        等待投票...
+                        ***
                     {% endif %}
                 </div>
             </div>
@@ -732,25 +841,24 @@
             <!-- 前4名指令列表 -->
             <div class="top-commands">
                 <ul id="top-commands-list" class="command-list">
-                    {% if democracy_info.commands %}
-                        {% for command, votes in democracy_info.commands[:4] %}
-                            <li class="command-item">
-                                <span class="command-name">{{ command }}</span>
-                                <span class="command-votes">{{ votes }}</span>
-                            </li>
-                        {% endfor %}
-                    {% else %}
+                    {% set commands_to_show = democracy_info.commands[:3] if democracy_info.commands else [] %}
+                    {% for i in range(3) %}
                         <li class="command-item">
-                            <span class="command-name">等待投票...</span>
-                            <span class="command-votes">0</span>
+                            {% if i < commands_to_show|length %}
+                                <span class="command-name">{{ commands_to_show[i][0] }}</span>
+                                <span class="command-votes">{{ commands_to_show[i][1] }}</span>
+                            {% else %}
+                                <span class="command-name">&nbsp;</span>
+                                <span class="command-votes">&nbsp;</span>
+                            {% endif %}
                         </li>
-                    {% endif %}
+                    {% endfor %}
                 </ul>
             </div>
             
             <!-- 缩短的弹幕列表 -->
             <ul id="order-danmaku-list" class="order-danmaku">
-                {% for danmaku in danmaku_list[-5:] %}
+                {% for danmaku in danmaku_list[-9:] %}
                     <li class="danmaku-item">
                         <span class="username">{{ danmaku['username'] }}</span>
                         <span class="command">{{ danmaku['command'] }}</span>
