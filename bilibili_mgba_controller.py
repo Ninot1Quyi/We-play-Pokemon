@@ -49,7 +49,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 直播间 ID
-ROOM_ID = 27063247
+ROOM_ID = 27063248
 
 # Bilibili 登录 Cookie 的 SESSDATA（替换为有效值）
 SESSDATA = ''
@@ -185,7 +185,7 @@ order_votes = 0  # 秩序模式票数
 order_commands = {}  # 秩序模式指令统计 {command: count}
 order_start_time = None  # 秩序模式统计开始时间
 order_lock = threading.Lock()  # 秩序模式锁
-ORDER_INTERVAL = 10  # 秩序模式统计间隔（秒）
+ORDER_INTERVAL = 30  # 秩序模式统计间隔（秒）
 
 # 自动输入机制
 last_command_time = time.time()  # 最后一次接收指令的时间
@@ -446,30 +446,21 @@ def check_mode_switch():
                 return True
     return False
 
-def add_order_command(command):
+def add_order_command(display_command, original_command):
     """在秩序模式下添加指令到统计"""
     global order_start_time
+    
     with order_lock:
         if order_start_time is None:
             order_start_time = time.time()
         
-        # 检查是否需要重置统计（超过10秒）
-        current_time = time.time()
-        if current_time - order_start_time >= ORDER_INTERVAL:
-            # 执行票数最高的指令
-            if order_commands:
-                execute_order_command()
-            # 重置统计
-            order_commands.clear()
-            order_start_time = current_time
-        
-        # 添加指令到统计
-        if command in order_commands:
-            order_commands[command] += 1
+        # 添加指令到统计，存储格式：{display_command: [count, original_command]}
+        if display_command in order_commands:
+            order_commands[display_command][0] += 1
         else:
-            order_commands[command] = 1
+            order_commands[display_command] = [1, original_command]
         
-        logger.info(f"Order command added: {command}. Current stats: {order_commands}")
+        logger.info(f"Order command added: {display_command}. Current stats: {order_commands}")
 
 def execute_order_command():
     """执行秩序模式下票数最高的指令"""
@@ -477,39 +468,89 @@ def execute_order_command():
         return
     
     # 找到票数最高的指令
-    sorted_commands = sorted(order_commands.items(), key=lambda x: x[1], reverse=True)
-    winning_command = sorted_commands[0][0]
-    winning_votes = sorted_commands[0][1]
+    sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
+    winning_display_command = sorted_commands[0][0]
+    winning_votes = sorted_commands[0][1][0]
+    winning_original_command = sorted_commands[0][1][1]
     
-    logger.info(f"Executing order winner: {winning_command} with {winning_votes} votes")
+    logger.info(f"Executing order winner: {winning_display_command} with {winning_votes} votes")
     
     # 执行指令
     with execution_lock:
         global executing_command
         executing_command = True
         try:
-            control_mgba(winning_command)
+            control_mgba(winning_original_command)
         finally:
             executing_command = False
 
 def order_execution_thread():
     """秩序模式执行线程"""
     global order_start_time
+    logger.info("Order execution thread started")
     while True:
+        should_execute = False
+        winning_command = None
+        winning_display_command = None
+        
         with mode_lock:
             if current_mode == "秩序":
                 with order_lock:
-                    if order_start_time is not None:
-                        current_time = time.time()
-                        if current_time - order_start_time >= ORDER_INTERVAL:
-                            # 执行票数最高的指令
-                            if order_commands:
-                                execute_order_command()
-                            # 重置统计
-                            order_commands.clear()
-                            order_start_time = current_time
+                    # 确保秩序模式下有计时器
+                    if order_start_time is None:
+                        order_start_time = time.time()
+                        logger.info("Order mode timer started")
+                    
+                    current_time = time.time()
+                    time_elapsed = current_time - order_start_time
+                    
+                    if current_time - order_start_time >= ORDER_INTERVAL:
+                        # 准备执行票数最高的指令
+                        if order_commands:
+                            sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
+                            winning_display_command = sorted_commands[0][0]
+                            winning_command = sorted_commands[0][1][1]  # 获取原始指令
+                            winning_votes = sorted_commands[0][1][0]
+                            should_execute = True
+                            logger.info(f"Order execution timer: Winner is {winning_display_command} with {winning_votes} votes")
+                        else:
+                            logger.info("Order execution timer: No commands to execute")
+                        
+                        # 重置统计
+                        order_commands.clear()
+                        order_start_time = current_time
         
-        time.sleep(1)  # 每秒检查一次
+        # 在锁外执行指令，避免死锁
+        if should_execute and winning_command:
+            logger.info(f"Executing order winner: {winning_display_command}")
+            # 直接调用control_mgba，它内部会处理execution_lock
+            control_mgba(winning_command)
+            
+            # 执行完毕后，发送清空的democracy_info更新到前端
+            democracy_update = {
+                'type': 'democracy_update',
+                'democracy_info': {
+                    'commands': [],  # 清空指令列表
+                    'time_left': ORDER_INTERVAL  # 重置时间
+                }
+            }
+            
+            # 发送到所有SSE客户端
+            with sse_lock:
+                disconnected_clients = []
+                for client_queue in sse_clients:
+                    try:
+                        client_queue.put(democracy_update)
+                    except:
+                        disconnected_clients.append(client_queue)
+                
+                # 清理断开的客户端
+                for client in disconnected_clients:
+                    sse_clients.remove(client)
+            
+            logger.info("Sent democracy clear update to frontend after execution")
+        
+        time.sleep(0.5)  # 每0.5秒检查一次，提高响应性
 
 def generate_random_command():
     """生成随机指令，从l0-9+i0-9+j0-9+i0-9中随机选择1-3个"""
@@ -629,7 +670,7 @@ def control_mgba(command: str):
                         for i in range(repeat_count):
                             press_key(key)
                             if i < repeat_count - 1:  # 不是最后一次按键
-                                time.sleep(0.25)  # 按键间隔0.5秒
+                                time.sleep(0.15)  # 按键间隔0.5秒
                         time.sleep(0.5)  # 指令之间的间隔
                     logger.info(f"Executed combined command: {command}")
             finally:
@@ -748,8 +789,8 @@ def process_danmaku_command(username: str, command: str, room_id: str = None):
         
         # 创建投票显示数据
         vote_display = f"投票: {vote_type}"
-        if mode_switched:
-            vote_display += f" -> 切换到{current_mode}模式!"
+        # if mode_switched:
+        #     vote_display = f" -> 切换到{current_mode}模式!"
         
         danmaku_data = {
             'username': username,
@@ -850,15 +891,14 @@ def process_danmaku_command(username: str, command: str, room_id: str = None):
                         logger.info(f"Freedom mode - Command ignored (executing): {command}")
             elif current_mode == "秩序":
                 # 秩序模式：添加到投票统计
-                add_order_command(command)
+                add_order_command(display_command, command)
                 executed = 1  # 标记为已处理（加入投票）
-                logger.info(f"Order mode - Added command to voting: {command}")
+                logger.info(f"Order mode - Added command to voting: {display_command}")
         
         # 创建结构化的弹幕数据
-        mode_prefix = f"[{current_mode}] " if current_mode else ""
         danmaku_data = {
             'username': username,
-            'command': mode_prefix + display_command,
+            'command': display_command,
             'timestamp': time.time()
         }
         
@@ -869,6 +909,34 @@ def process_danmaku_command(username: str, command: str, room_id: str = None):
         
         # 实时推送给所有SSE客户端
         broadcast_danmaku(danmaku_data)
+        
+    # 如果是秩序模式，立即发送democracy_info更新（在mode_lock外执行）
+    if current_mode == "秩序":
+        with order_lock:
+            democracy_update = {}
+            if order_commands:
+                sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
+                formatted_commands = [(cmd, votes[0]) for cmd, votes in sorted_commands]
+                democracy_update = {
+                    'type': 'democracy_update',
+                    'democracy_info': {
+                        'commands': formatted_commands[:5],
+                        'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
+                    }
+                }
+                
+                # 发送到所有SSE客户端
+                with sse_lock:
+                    disconnected_clients = []
+                    for client_queue in sse_clients:
+                        try:
+                            client_queue.put(democracy_update)
+                        except:
+                            disconnected_clients.append(client_queue)
+                    
+                    # 清理断开的客户端
+                    for client in disconnected_clients:
+                        sse_clients.remove(client)
     else:
         logger.info(f"Unknown command ignored: {command}")
         executed = 0  # 标记为未执行
@@ -958,9 +1026,11 @@ def index():
         with order_lock:
             if order_commands:
                 # 按票数排序
-                sorted_commands = sorted(order_commands.items(), key=lambda x: x[1], reverse=True)
+                sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
+                # 转换为前端需要的格式：[display_command, vote_count]
+                formatted_commands = [(cmd, votes[0]) for cmd, votes in sorted_commands]
                 democracy_info = {
-                    'commands': sorted_commands[:5],  # 只显示前5名
+                    'commands': formatted_commands[:5],  # 只显示前5名
                     'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
                 }
     
@@ -1006,9 +1076,11 @@ def danmaku_stream():
                     if current_mode == "秩序":
                         with order_lock:
                             if order_commands:
-                                sorted_commands = sorted(order_commands.items(), key=lambda x: x[1], reverse=True)
+                                sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
+                                # 转换为前端需要的格式：[display_command, vote_count]
+                                formatted_commands = [(cmd, votes[0]) for cmd, votes in sorted_commands]
                                 democracy_info = {
-                                    'commands': sorted_commands[:5],
+                                    'commands': formatted_commands[:5],
                                     'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
                                 }
                     
