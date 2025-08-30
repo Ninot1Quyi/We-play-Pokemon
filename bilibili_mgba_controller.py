@@ -251,6 +251,9 @@ def activate_mgba_window(search_text: str = MGBA_WINDOW_TITLE):
     """查找并激活 mGBA 窗口（改进版本）"""
     hwnd=win32gui.FindWindow(None,search_text)
     if not hwnd:
+        logger.error(f"No window found with '{search_text}' in title")
+        return False
+    if not hwnd:
         logging.error("not find window")
         return False
     with window_lock:  # 线程安全
