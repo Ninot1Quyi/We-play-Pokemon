@@ -249,20 +249,10 @@ def broadcast_danmaku(danmaku_data):
 
 def activate_mgba_window(search_text: str = MGBA_WINDOW_TITLE):
     """查找并激活 mGBA 窗口（改进版本）"""
-    def enum_windows(hwnd, results):
-        if win32gui.IsWindowVisible(hwnd):
-            title = win32gui.GetWindowText(hwnd)
-            if search_text in title:
-                results.append(hwnd)
-    
-    hwnd_list = []
-    win32gui.EnumWindows(enum_windows, hwnd_list)
-    
-    if not hwnd_list:
+    hwnd=win32gui.FindWindow(None,search_text)
+    if not hwnd:
         logger.error(f"No window found with '{search_text}' in title")
         return False
-    
-    hwnd = hwnd_list[0]
     with window_lock:  # 线程安全
         try:
             # 检查窗口是否已经是前台窗口
