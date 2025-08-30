@@ -253,9 +253,6 @@ def activate_mgba_window(search_text: str = MGBA_WINDOW_TITLE):
     if not hwnd:
         logger.error(f"No window found with '{search_text}' in title")
         return False
-    if not hwnd:
-        logging.error("not find window")
-        return False
     with window_lock:  # 线程安全
         try:
             # 检查窗口是否已经是前台窗口
