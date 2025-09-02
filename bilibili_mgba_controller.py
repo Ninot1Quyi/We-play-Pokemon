@@ -62,6 +62,7 @@ ROOM_OWNER_AUTH_CODE = None
 DANMAKU_MODE = None
 DOUYIN_WEBSOCKET_PORT = None
 DOUYIN_ENABLED = None
+VOTING_ENABLED = None
 BLOCKED_WORDS = []
 
 # 时间文件
@@ -200,7 +201,7 @@ window_lock = threading.Lock()  # 线程锁
 
 def load_config():
     """加载配置文件"""
-    global ROOM_ID, SESSDATA, ACCESS_KEY_ID, ACCESS_KEY_SECRET, APP_ID, ROOM_OWNER_AUTH_CODE, DANMAKU_MODE, ORDER_INTERVAL, DOUYIN_WEBSOCKET_PORT, DOUYIN_ENABLED
+    global ROOM_ID, SESSDATA, ACCESS_KEY_ID, ACCESS_KEY_SECRET, APP_ID, ROOM_OWNER_AUTH_CODE, DANMAKU_MODE, ORDER_INTERVAL, DOUYIN_WEBSOCKET_PORT, DOUYIN_ENABLED, VOTING_ENABLED
     
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -223,6 +224,9 @@ def load_config():
         DOUYIN_WEBSOCKET_PORT = douyin_config.get('websocket_port', 8765)
         DOUYIN_ENABLED = douyin_config.get('enabled', False)
         
+        # 投票功能配置
+        VOTING_ENABLED = config.get('voting_enabled', True)
+        
         # 屏蔽词配置
         global BLOCKED_WORDS
         BLOCKED_WORDS = config.get('blocked_words', [])
@@ -231,6 +235,7 @@ def load_config():
         logger.info(f"Room ID: {ROOM_ID}")
         logger.info(f"Danmaku Mode: {DANMAKU_MODE}")
         logger.info(f"Order Interval: {ORDER_INTERVAL} seconds")
+        logger.info(f"Voting Enabled: {VOTING_ENABLED}")
         logger.info(f"Douyin Enabled: {DOUYIN_ENABLED}")
         if DOUYIN_ENABLED:
             logger.info(f"Douyin WebSocket Port: {DOUYIN_WEBSOCKET_PORT}")
@@ -247,6 +252,7 @@ def load_config():
         DANMAKU_MODE = 'openlive'
         DOUYIN_WEBSOCKET_PORT = 8765
         DOUYIN_ENABLED = False
+        VOTING_ENABLED = True
         BLOCKED_WORDS = []
     except json.JSONDecodeError as e:
         logger.error(f"Error parsing configuration file {CONFIG_FILE}: {e}")
@@ -261,6 +267,7 @@ def load_config():
         DANMAKU_MODE = 'openlive'
         DOUYIN_WEBSOCKET_PORT = 8765
         DOUYIN_ENABLED = False
+        VOTING_ENABLED = True
         BLOCKED_WORDS = []
     except Exception as e:
         logger.error(f"Unexpected error loading configuration: {e}")
@@ -275,6 +282,7 @@ def load_config():
         DANMAKU_MODE = 'openlive'
         DOUYIN_WEBSOCKET_PORT = 8765
         DOUYIN_ENABLED = False
+        VOTING_ENABLED = True
         BLOCKED_WORDS = []
 
 def filter_username(username: str) -> str:
@@ -483,7 +491,7 @@ def activate_mgba_window(search_text: str = MGBA_WINDOW_TITLE):
             logger.error(f"Error activating mGBA window: {e}")
             return False
 
-def press_key(key: str, duration: float = 0.02):
+def press_key(key: str, duration: float = 0.1):
     """模拟按下并释放按键"""
     try:
         pyautogui.keyDown(key)
@@ -492,6 +500,17 @@ def press_key(key: str, duration: float = 0.02):
         logger.info(f"Pressed key: {key} (duration: {duration}s)")
     except Exception as e:
         logger.error(f"Failed to press key {key}: {e}")
+
+def hold_key(key: str, duration: float = 1.0):
+    """长按按键指定时间"""
+    try:
+        pyautogui.keyDown(key)
+        logger.info(f"Started holding key: {key} for {duration}s")
+        time.sleep(duration)
+        pyautogui.keyUp(key)
+        logger.info(f"Released key: {key} after {duration}s")
+    except Exception as e:
+        logger.error(f"Failed to hold key {key}: {e}")
 
 def control_mgba_run(command: str):
     """奔跑模式控制 mGBA（长按B键的同时执行移动指令）"""
@@ -579,6 +598,68 @@ def control_mgba_run(command: str):
                 executing_command = False
     else:
         logger.warning(f"No valid movement commands in run command: r {command}")
+
+def control_mgba_hold(command: str):
+    """长按指令控制 mGBA（支持组合长按指令如 ii2 ll3 表示长按i键2秒，再长按l键3秒）"""
+    global executing_command
+    
+    command = command.strip().lower()
+    
+    # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
+    if '+' in command:
+        # 按 '+' 分割组合指令，最多3个子指令
+        sub_commands = command.split('+', 2)
+    else:
+        # 按空格分割组合指令，最多3个子指令
+        sub_commands = command.split(' ', 2)
+    
+    valid_sub_commands = []
+    
+    # 解析每个子指令
+    for sub_cmd in sub_commands:
+        sub_cmd = sub_cmd.strip()
+        if not sub_cmd:
+            continue
+        
+        # 检查是否是长按指令格式（如ii、ii2、jj3等）
+        if len(sub_cmd) >= 2:
+            # 检查是否是双字符开头（如ii、jj、kk、ll等）
+            first_char = sub_cmd[0]
+            second_char = sub_cmd[1]
+            
+            if first_char == second_char and first_char in COMMAND_TO_KEY:
+                # 获取长按时间，默认1秒
+                hold_duration = 1.0
+                remaining_chars = sub_cmd[2:]
+                
+                if remaining_chars.isdigit():
+                    duration_value = int(remaining_chars)
+                    if 1 <= duration_value <= 9:
+                        hold_duration = float(duration_value)
+                
+                valid_sub_commands.append((first_char, hold_duration))
+            else:
+                logger.warning(f"Invalid hold command format: {sub_cmd}")
+        else:
+            logger.warning(f"Hold command too short: {sub_cmd}")
+    
+    # 如果有合法子指令，依次执行
+    if valid_sub_commands:
+        with execution_lock:
+            executing_command = True
+            try:
+                if not activate_mgba_window():
+                    logger.warning("mGBA window not found or activation failed, skipping hold command")
+                else:
+                    for base_command, hold_duration in valid_sub_commands:
+                        key = COMMAND_TO_KEY[base_command]
+                        hold_key(key, hold_duration)
+                        time.sleep(0.1)  # 指令之间的短暂间隔
+                    logger.info(f"Executed hold command: {command}")
+            finally:
+                executing_command = False
+    else:
+        logger.warning(f"No valid hold commands in: {command}")
 
 def add_vote(vote_type):
     """添加投票并实时更新支持率"""
@@ -688,6 +769,122 @@ def execute_order_command():
         finally:
             executing_command = False
 
+def trigger_vote_reset(runtime_hours=None):
+    """手动触发投票重置（用于测试）"""
+    global freedom_support
+    
+    if not VOTING_ENABLED:
+        logger.info("Vote reset skipped: voting is disabled")
+        return
+    
+    with vote_lock:
+        old_freedom_support = freedom_support
+        freedom_support = 50.0
+        
+    if runtime_hours is None:
+        current_timestamp = time.time()
+        if start_time:
+            # 将datetime对象转换为时间戳
+            start_timestamp = start_time.timestamp()
+            runtime_seconds = int(current_timestamp - start_timestamp)
+            runtime_hours = runtime_seconds // 3600
+        else:
+            runtime_hours = 0
+    
+    logger.info(f"Manual vote reset triggered: Reset freedom_support from {old_freedom_support:.1f}% to 50.0%")
+    
+    # 发送投票更新消息给前端
+    with mode_lock:
+        vote_update = {
+            'type': 'vote_update',
+            'mode_info': {
+                'current_mode': current_mode,
+                'freedom_support': 50.0,
+                'order_support': 50.0
+            },
+            'mode_switched': False,
+            'should_shake': False,
+            'reset_message': f'投票结果已重置（运行时间: {runtime_hours}小时）'
+        }
+    
+    # 广播投票更新给所有SSE客户端
+    with sse_lock:
+        disconnected_clients = []
+        for client_queue in sse_clients:
+            try:
+                client_queue.put(vote_update)
+            except:
+                disconnected_clients.append(client_queue)
+        
+        # 清理断开的客户端
+        for client in disconnected_clients:
+            sse_clients.remove(client)
+
+def hourly_vote_reset_thread():
+    """每小时重置投票结果线程"""
+    global freedom_support, start_time
+    logger.info("Hourly vote reset thread started")
+    
+    last_reset_hour = -1  # 记录上次重置的小时
+    
+    while True:
+        try:
+            if not VOTING_ENABLED:
+                time.sleep(60)  # 如果投票功能未开启，每分钟检查一次
+                continue
+                
+            # 获取当前时间相对于开始时间的运行时间
+            current_timestamp = time.time()
+            if start_time:
+                # 将datetime对象转换为时间戳
+                start_timestamp = start_time.timestamp()
+                runtime_seconds = int(current_timestamp - start_timestamp)
+                runtime_hours = runtime_seconds // 3600
+                
+                # 检查是否到了新的整点小时
+                if runtime_hours > last_reset_hour and runtime_hours > 0:
+                    last_reset_hour = runtime_hours
+                    
+                    # 重置投票支持率为50%
+                    with vote_lock:
+                        old_freedom_support = freedom_support
+                        freedom_support = 50.0
+                        
+                    logger.info(f"Hourly vote reset: Runtime {runtime_hours}h reached. Reset freedom_support from {old_freedom_support:.1f}% to 50.0%")
+                    
+                    # 发送投票更新消息给前端
+                    with mode_lock:
+                        vote_update = {
+                            'type': 'vote_update',
+                            'mode_info': {
+                                'current_mode': current_mode,
+                                'freedom_support': 50.0,
+                                'order_support': 50.0
+                            },
+                            'mode_switched': False,
+                            'should_shake': False,
+                            'reset_message': f'投票已重置'
+                        }
+                    
+                    # 广播投票更新给所有SSE客户端
+                    with sse_lock:
+                        disconnected_clients = []
+                        for client_queue in sse_clients:
+                            try:
+                                client_queue.put(vote_update)
+                            except:
+                                disconnected_clients.append(client_queue)
+                        
+                        # 清理断开的客户端
+                        for client in disconnected_clients:
+                            sse_clients.remove(client)
+            
+            time.sleep(60)  # 每分钟检查一次
+            
+        except Exception as e:
+            logger.error(f"Hourly vote reset thread error: {e}")
+            time.sleep(60)  # 出错时等待1分钟后继续
+
 def config_hot_reload_thread():
     """配置热更新线程，每120秒从配置文件中读取最新的ORDER_INTERVAL和屏蔽词"""
     global ORDER_INTERVAL, BLOCKED_WORDS
@@ -777,6 +974,10 @@ def order_execution_thread():
                 # 奔跑指令：移除run:前缀并调用奔跑控制函数
                 actual_command = winning_command[4:]  # 移除"run:"前缀
                 control_mgba_run(actual_command)
+            elif winning_command.startswith('hold:'):
+                # 长按指令：移除hold:前缀并调用长按控制函数
+                actual_command = winning_command[5:]  # 移除"hold:"前缀
+                control_mgba_hold(actual_command)
             else:
                 # 普通指令：直接调用control_mgba
                 control_mgba(winning_command)
@@ -958,9 +1159,9 @@ def control_mgba(command: str):
                         key = COMMAND_TO_KEY[base_command]
                         for i in range(repeat_count):
                             press_key(key)
-                            if i < repeat_count - 1:  # 不是最后一次按键
-                                time.sleep(0.2)  # 按键间隔0.5秒
-                        time.sleep(0.2)  # 指令之间的间隔
+                            # if i < repeat_count - 1:  # 不是最后一次按键
+                                # time.sleep(0.2)  # 按键间隔0.5秒
+                        # time.sleep(0.2)  # 指令之间的间隔
                     logger.info(f"Executed combined command: {command}")
             finally:
                 executing_command = False
@@ -1303,42 +1504,97 @@ def process_danmaku_command(username: str, command: str, room_id: str = None, pl
             logger.warning(f"Invalid run command format: {command}. Run commands can only contain i,j,k,l and numbers.")
             return  # 无效的奔跑指令，直接返回，不继续处理为普通指令
     
-    # 获取当前时间戳（精确到秒）
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 检查是否是长按指令（如ii、ii2、jj3等）
+    is_hold_command = False
     
-    # 检查是否是投票指令
-    vote_commands = {
-        '自由模式': '自由',
-        '自由': '自由', 
-        'anarchy': '自由',
-        'freedom': '自由',
-        '秩序模式': '秩序',
-        '秩序': '秩序',
-        'democracy': '秩序',
-        'order': '秩序'
-    }
+    # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
+    if '+' in command_lower:
+        hold_sub_commands = command_lower.split('+', 2)
+    else:
+        hold_sub_commands = command_lower.split(' ', 2)
     
-    if command_lower in vote_commands:
-        vote_type = vote_commands[command_lower]
-        should_shake = add_vote(vote_type)
+    # 检查是否所有子指令都是长按格式
+    all_hold_commands = True
+    for sub_cmd in hold_sub_commands:
+        sub_cmd = sub_cmd.strip()
+        if not sub_cmd:
+            continue
         
-        # 检查是否需要切换模式
-        mode_switched = check_mode_switch()
+        # 检查是否是长按指令格式（如ii、ii2、jj3等）
+        if len(sub_cmd) >= 2:
+            first_char = sub_cmd[0]
+            second_char = sub_cmd[1]
+            
+            if first_char == second_char and first_char in COMMAND_TO_KEY:
+                # 检查后面是否只有数字或为空
+                remaining_chars = sub_cmd[2:]
+                if remaining_chars == '' or remaining_chars.isdigit():
+                    continue  # 这是一个有效的长按指令
         
-        # 保存投票到CSV
-        try:
-            danmaku_saver.save_danmaku(current_time, username, original_command, 1 if mode_switched else 0, platform)
-        except Exception as e:
-            logger.error(f"Failed to save vote to CSV: {e}")
+        # 如果到这里，说明不是长按指令格式
+        all_hold_commands = False
+        break
+    
+    if all_hold_commands and any(sub_cmd.strip() for sub_cmd in hold_sub_commands):
+        is_hold_command = True
         
-        # 创建投票显示数据
-        vote_display = f" {vote_type}"
-        # if mode_switched:
-        #     vote_display = f" -> 切换到{current_mode}模式!"
+        # 获取当前时间戳
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        # 生成显示用的指令
+        display_commands = []
+        for sub_cmd in hold_sub_commands:
+            sub_cmd = sub_cmd.strip()
+            if not sub_cmd:
+                continue
+            
+            first_char = sub_cmd[0]
+            hold_duration = 1.0
+            remaining_chars = sub_cmd[2:]
+            
+            if remaining_chars.isdigit():
+                duration_value = int(remaining_chars)
+                if 1 <= duration_value <= 9:
+                    hold_duration = float(duration_value)
+            
+            key = COMMAND_TO_KEY.get(first_char, first_char)
+            display_cmd = KEY_TO_DISPLAY.get(key, first_char)
+            if hold_duration > 1.0:
+                display_cmd += f"长按{int(hold_duration)}s"
+            else:
+                display_cmd += "长按1s"
+            display_commands.append(display_cmd)
+        
+        # 根据原始指令格式决定显示格式
+        if '+' in original_command:
+            display_command = ' + '.join(display_commands)
+        else:
+            display_command = ' + '.join(display_commands)
+        
+        # 根据当前模式处理长按指令
+        executed = 0
+        with mode_lock:
+            if current_mode == "自由":
+                # 自由模式：直接执行长按指令
+                with latest_command_lock:
+                    if not executing_command:
+                        # 直接执行长按指令，不通过latest_command队列
+                        threading.Thread(target=control_mgba_hold, args=(command,), daemon=True).start()
+                        executed = 1
+                        logger.info(f"Freedom mode - Executing hold command: {command}")
+                    else:
+                        executed = 0
+                        logger.info(f"Freedom mode - Hold command ignored (executing): {command}")
+            elif current_mode == "秩序":
+                # 秩序模式：添加到投票统计，加上hold:前缀标识长按指令
+                add_order_command(display_command, f"hold:{command}")
+                executed = 1
+                logger.info(f"Order mode - Added hold command to voting: {display_command}")
+        
+        # 创建结构化的弹幕数据
         danmaku_data = {
             'username': filter_username(username),
-            'command': vote_display,
+            'command': display_command,
             'timestamp': time.time()
         }
         
@@ -1349,32 +1605,114 @@ def process_danmaku_command(username: str, command: str, room_id: str = None, pl
         # 广播给前端
         broadcast_danmaku(danmaku_data)
         
-        # 立即发送投票更新信息
-        with mode_lock:
-            vote_update = {
-                'type': 'vote_update',
-                'mode_info': {
-                    'current_mode': current_mode,
-                    'freedom_support': round(freedom_support, 1),
-                    'order_support': round(100.0 - freedom_support, 1)
-                },
-                'mode_switched': mode_switched,
-                'should_shake': should_shake if 'should_shake' in locals() else False
-            }
+        # 保存到CSV
+        try:
+            danmaku_saver.save_danmaku(current_time, username, original_command, executed, platform)
+        except Exception as e:
+            logger.error(f"Failed to save hold command to CSV: {e}")
         
-        # 发送投票更新到所有SSE客户端
-        disconnected_clients = []
-        for client_queue in sse_clients:
+        # 如果是秩序模式，发送democracy更新
+        if current_mode == "秩序":
+            with order_lock:
+                if order_commands:
+                    sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
+                    # 使用显示名称而不是统计key
+                    formatted_commands = [(votes[2] if len(votes) > 2 else cmd, votes[0]) for cmd, votes in sorted_commands]
+                    democracy_update = {
+                        'type': 'democracy_update',
+                        'democracy_info': {
+                            'commands': formatted_commands[:5],
+                            'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
+                        }
+                    }
+                    
+                    with sse_lock:
+                        disconnected_clients = []
+                        for client_queue in sse_clients:
+                            try:
+                                client_queue.put(democracy_update)
+                            except:
+                                disconnected_clients.append(client_queue)
+                        
+                        for client in disconnected_clients:
+                            sse_clients.remove(client)
+        
+        return  # 长按指令处理完毕，直接返回
+    
+    # 获取当前时间戳（精确到秒）
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 检查是否是投票指令（仅在启用投票功能时处理）
+    if VOTING_ENABLED:
+        vote_commands = {
+            '自由模式': '自由',
+            '自由': '自由', 
+            'anarchy': '自由',
+            'freedom': '自由',
+            'free': '自由',
+            '秩序模式': '秩序',
+            '秩序': '秩序',
+            'democracy': '秩序',
+            'order': '秩序'
+        }
+        
+        if command_lower in vote_commands:
+            vote_type = vote_commands[command_lower]
+            should_shake = add_vote(vote_type)
+            
+            # 检查是否需要切换模式
+            mode_switched = check_mode_switch()
+            
+            # 保存投票到CSV
             try:
-                client_queue.put(vote_update)
-            except:
-                disconnected_clients.append(client_queue)
-        
-        # 清理断开的客户端
-        for client in disconnected_clients:
-            sse_clients.remove(client)
-        
-        return  # 投票指令处理完毕，直接返回
+                danmaku_saver.save_danmaku(current_time, username, original_command, 1 if mode_switched else 0, platform)
+            except Exception as e:
+                logger.error(f"Failed to save vote to CSV: {e}")
+            
+            # 创建投票显示数据
+            vote_display = f" {vote_type}"
+            # if mode_switched:
+            #     vote_display = f" -> 切换到{current_mode}模式!"
+            
+            danmaku_data = {
+                'username': filter_username(username),
+                'command': vote_display,
+                'timestamp': time.time()
+            }
+            
+            # 添加到显示队列
+            with danmaku_lock:
+                danmaku_display_queue.append(danmaku_data)
+            
+            # 广播给前端
+            broadcast_danmaku(danmaku_data)
+            
+            # 立即发送投票更新信息
+            with mode_lock:
+                vote_update = {
+                    'type': 'vote_update',
+                    'mode_info': {
+                        'current_mode': current_mode,
+                        'freedom_support': round(freedom_support, 1),
+                        'order_support': round(100.0 - freedom_support, 1)
+                    },
+                    'mode_switched': mode_switched,
+                    'should_shake': should_shake if 'should_shake' in locals() else False
+                }
+            
+            # 发送投票更新到所有SSE客户端
+            disconnected_clients = []
+            for client_queue in sse_clients:
+                try:
+                    client_queue.put(vote_update)
+                except:
+                    disconnected_clients.append(client_queue)
+            
+            # 清理断开的客户端
+            for client in disconnected_clients:
+                sse_clients.remove(client)
+            
+            return  # 投票指令处理完毕，直接返回
     
     # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
     if '+' in command:
@@ -1553,10 +1891,8 @@ class OpenLiveHandler(blivedm.BaseHandler):
 def index():
     """渲染 HTML 页面"""
     runtime = get_runtime()
-    with danmaku_lock:
-        danmaku_list = list(danmaku_display_queue)  # 获取队列中的所有数据
     
-    # 获取模式和投票信息
+    # 获取当前模式信息
     with mode_lock:
         mode_info = {
             'current_mode': current_mode,
@@ -1564,25 +1900,41 @@ def index():
             'order_support': round(100.0 - freedom_support, 1)
         }
     
-    # 获取秩序模式统计信息
-    democracy_info = {}
-    if current_mode == "秩序":
-        with order_lock:
-            if order_commands:
-                # 按票数排序
-                sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
-                # 转换为前端需要的格式：[display_command, vote_count]
-                formatted_commands = [(votes[2] if len(votes) > 2 else cmd, votes[0]) for cmd, votes in sorted_commands]
-                democracy_info = {
-                    'commands': formatted_commands[:5],  # 只显示前5名
-                    'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
-                }
+    # 获取秩序模式信息
+    with order_lock:
+        democracy_info = {
+            'commands': [],
+            'time_left': ORDER_INTERVAL
+        }
+        
+        if order_commands and current_mode == "秩序":
+            sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
+            formatted_commands = [(cmd, votes[0]) for cmd, votes in sorted_commands]
+            democracy_info = {
+                'commands': formatted_commands[:5],
+                'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
+            }
+    
+    # 获取弹幕列表
+    with danmaku_lock:
+        danmaku_list = list(danmaku_display_queue)
     
     return render_template('index.html', 
-                         runtime=runtime, 
-                         danmaku_list=danmaku_list,
+                         runtime=runtime,
                          mode_info=mode_info,
-                         democracy_info=democracy_info)
+                         democracy_info=democracy_info,
+                         voting_enabled=VOTING_ENABLED,
+                         danmaku_list=danmaku_list)
+
+@app.route('/api/test/reset-vote')
+def test_reset_vote():
+    """测试API：手动触发投票重置"""
+    try:
+        trigger_vote_reset()
+        return {'success': True, 'message': '投票重置测试成功'}
+    except Exception as e:
+        logger.error(f"Test vote reset failed: {e}")
+        return {'success': False, 'message': f'投票重置测试失败: {str(e)}'}
 
 @app.route('/api/danmaku/stream')
 def danmaku_stream():
@@ -1697,6 +2049,12 @@ async def main():
     config_reload_thread = threading.Thread(target=config_hot_reload_thread, daemon=True)
     config_reload_thread.start()
     logger.info("Started config hot reload thread")
+    
+    # 启动每小时投票重置线程
+    if VOTING_ENABLED:
+        hourly_reset_thread = threading.Thread(target=hourly_vote_reset_thread, daemon=True)
+        hourly_reset_thread.start()
+        logger.info("Started hourly vote reset thread")
     
     # 启动抖音WebSocket服务器
     if DOUYIN_ENABLED:

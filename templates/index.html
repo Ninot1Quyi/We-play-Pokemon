@@ -582,12 +582,39 @@
 
     </style>
     <script>
+        // 全局变量
         let eventSource;
-        let startTime = null;
-        let runtimeInterval = null;
-        let currentMode = 'freedom'; // 当前模式
-        let modeInfo = {}; // 模式信息
-        let democracyInfo = {}; // 民主模式信息
+        let startTime;
+        let runtimeInterval;
+        
+        // 从模板获取数据，添加错误处理
+        let modeInfo;
+        let democracyInfo;
+        let votingEnabled;
+        let currentMode;
+        
+        try {
+            modeInfo = JSON.parse('{{ mode_info|tojson|safe }}') || { current_mode: '秩序' };
+        } catch (e) {
+            modeInfo = { current_mode: '秩序' };
+        }
+        
+        try {
+            democracyInfo = JSON.parse('{{ democracy_info|tojson|safe }}') || {};
+        } catch (e) {
+            democracyInfo = {};
+        }
+        
+        try {
+            votingEnabled = JSON.parse('{{ voting_enabled|tojson|safe }}');
+            if (votingEnabled === null || votingEnabled === undefined) {
+                votingEnabled = true;
+            }
+        } catch (e) {
+            votingEnabled = true;
+        }
+        
+        currentMode = (modeInfo && modeInfo.current_mode === '秩序') ? 'order' : 'freedom';
         
         // 格式化运行时间为中文显示
         function formatRuntimeChinese(seconds) {
@@ -777,6 +804,44 @@
             }
         }
         
+        // 显示投票重置通知
+        function showResetNotification(message) {
+            // 创建通知元素
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background-color: rgba(0, 0, 0, 0.9);
+                color: #fff;
+                padding: 20px;
+                border: 2px solid #fff;
+                font-family: 'FusionPixel', monospace;
+                font-size: 16px;
+                text-align: center;
+                z-index: 1000;
+                max-width: 400px;
+                border-radius: 0;
+                image-rendering: pixelated;
+                -webkit-font-smoothing: none;
+                font-smooth: never;
+            `;
+            notification.textContent = message;
+            
+            // 添加到页面
+            document.body.appendChild(notification);
+            
+            // 3秒后自动移除
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 3000);
+            
+            console.log('Vote reset notification:', message);
+        }
+        
         // 切换布局模式
         function switchLayout(mode) {
             const freedomLayout = document.querySelector('.freedom-layout');
@@ -942,8 +1007,9 @@
                 
                 danmakuList.appendChild(li);
                 
-                // 保持只显示最新13条
-                while (danmakuList.children.length > 13) {
+                // 根据投票功能配置调整弹幕列表长度
+                const maxDanmaku = votingEnabled ? 14 : 15;
+                while (danmakuList.children.length > maxDanmaku) {
                     danmakuList.removeChild(danmakuList.firstChild);
                 }
                 
@@ -1004,6 +1070,11 @@
                             if (data.mode_switched && modeInfo.current_mode !== currentMode) {
                                 switchLayout(modeInfo.current_mode);
                             }
+                            
+                            // 如果有重置消息，显示通知
+                            if (data.reset_message) {
+                                showResetNotification(data.reset_message);
+                            }
                         }
                     } else if (data.type === 'democracy_update') {
                         // 秩序模式实时更新事件
@@ -1063,7 +1134,8 @@
         <h1>We Play</h1>
         <div class="subtitle">Pokémon</div>
         <div id="runtime">{{ runtime }}</div>
-        <!-- 投票占比显示条 -->
+        <!-- 投票占比显示条（仅在启用投票功能时显示） -->
+        {% if voting_enabled %}
         <div class="vote-bar-container">
             <div class="vote-bar-wrapper">
                 <span class="vote-labels">自由</span>
@@ -1076,6 +1148,7 @@
                 <span class="vote-labels">秩序</span>
             </div>
         </div>
+        {% endif %}
         
         <!-- 自由模式布局 -->
         <div class="freedom-layout" {% if mode_info.current_mode == '秩序' %}style="display: none;"{% endif %}>
@@ -1133,11 +1206,12 @@
         
         <div class="instructions">
             <div style="text-align: center; line-height: 1.5; font-size: 0.9em;">
-                <span class="command-key">ikjl</span> 上下左右 | <span class="command-key">A/B</span> 确认/取消 | <span class="command-key">开始/选择 </span> 功能键 | <span class="command-key">自由/秩序</span> 投票
+                <span class="command-key">ikjl</span> 上下左右 | <span class="command-key">A/B</span> 确认/取消 | <span class="command-key">开始/选择 </span> 功能键{% if voting_enabled %} | <span class="command-key">自由/秩序</span> 投票{% endif %}
             </div>
             <div style="text-align: center; font-size: 9px; color: #888;">
                 按键+数字，如：i3、a5（重复执行）<br>
-                组合指令：a3 b2 i 或 rk2 j4 i2（用空格连接,r前缀表示奔跑）
+                组合指令：a3 b2 i , r前缀表示奔跑: rk2 i2，长按指令：ii2 <br>
+                
             </div>
         </div>
     </div>

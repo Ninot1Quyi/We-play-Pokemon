@@ -12,5 +12,7 @@
         "enabled": false,
         "websocket_port": 8765
     },
-    "ORDER_INTERVAL": 20
+    "ORDER_INTERVAL": 20,
+    "voting_enabled": true,
+    "blocked_words": ["哔哩哔哩", "B站", "b站", "哔站", "抖音", "douyin"]
 }
