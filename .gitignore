@@ -10,3 +10,4 @@ danmaku/
 # Virtual environments
 .venv
 .DS_Store
+config.json

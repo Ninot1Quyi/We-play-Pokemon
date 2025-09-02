@@ -1,0 +1,16 @@
+{
+    "room_id": example_room_id,
+    "sessdata": "",
+    "openlive": {
+        "access_key_id": "example",
+        "access_key_secret": "example",
+        "app_id": example,
+        "room_owner_auth_code": "example"
+    },
+    "danmaku_mode": "openlive",
+    "douyin": {
+        "enabled": false,
+        "websocket_port": 8765
+    },
+    "ORDER_INTERVAL": 20
+}

@@ -152,6 +152,17 @@
             image-rendering: pixelated;
             -webkit-font-smoothing: none;
             font-smooth: never;
+            transition: color 0.3s ease, text-shadow 0.3s ease;
+        }
+
+        .vote-labels.active {
+            color: #fff;
+            text-shadow: 1px 1px 0px #000;
+        }
+
+        .vote-labels.inactive {
+            color: #999;
+            text-shadow: 1px 1px 0px #444;
         }
 
         .vote-bar {
@@ -175,12 +186,118 @@
         .vote-divider {
             position: absolute;
             top: 0;
-            width: 2px;
+            width: 3px;
             height: 100%;
             background-color: black;
             transition: left 0.3s ease;
+            pointer-events: none;
             image-rendering: pixelated;
-            box-shadow: 1px 0px 0px #333;
+            z-index: 2;
+        }
+
+        .vote-arrow {
+            position: absolute;
+            top: calc(50% + 1px);
+            transform: translateY(-50%);
+            font-family: 'Press Start 2P', monospace;
+            font-size: 12px;
+            line-height: 1;
+            color: #000;
+            opacity: 0;
+            pointer-events: none;
+            image-rendering: pixelated;
+            -webkit-font-smoothing: none;
+            font-smooth: never;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 12px;
+            width: 12px;
+        }
+
+        .vote-arrow.show {
+            opacity: 1;
+        }
+
+        .vote-arrow.left {
+            right: 4px;
+        }
+
+        .vote-arrow.right {
+            left: 4px;
+        }
+
+        .vote-threshold {
+            position: absolute;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            background: repeating-linear-gradient(
+                to bottom,
+                #666 0px,
+                #666 2px,
+                transparent 2px,
+                transparent 4px
+            );
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+            image-rendering: pixelated;
+            z-index: 1;
+        }
+
+        .vote-threshold.show {
+            opacity: 1;
+        }
+
+        /* 投票条抖动动画 - 不同强度 */
+        @keyframes vote-bar-shake-light {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(0.5px); }
+            50% { transform: translateX(0); }
+            75% { transform: translateX(0.5px); }
+            100% { transform: translateX(0); }
+        }
+
+        @keyframes vote-bar-shake-medium {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(1px); }
+            50% { transform: translateX(0); }
+            75% { transform: translateX(1px); }
+            100% { transform: translateX(0); }
+        }
+
+        @keyframes vote-bar-shake-strong {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(2px); }
+            50% { transform: translateX(0); }
+            75% { transform: translateX(2px); }
+            100% { transform: translateX(0); }
+        }
+
+        @keyframes vote-bar-shake-extreme {
+            0% { transform: translateX(0); }
+            20% { transform: translateX(3px); }
+            40% { transform: translateX(0); }
+            60% { transform: translateX(3px); }
+            80% { transform: translateX(0); }
+            100% { transform: translateX(0); }
+        }
+
+        .vote-bar.shake-light {
+            animation: vote-bar-shake-light 0.4s ease-in-out 2;
+        }
+
+        .vote-bar.shake-medium {
+            animation: vote-bar-shake-medium 0.35s ease-in-out 3;
+        }
+
+        .vote-bar.shake-strong {
+            animation: vote-bar-shake-strong 0.3s ease-in-out 3;
+        }
+
+        .vote-bar.shake-extreme {
+            animation: vote-bar-shake-extreme 0.25s ease-in-out 4;
         }
 
         .vote-counts {
@@ -357,7 +474,7 @@
         }
 
         .democracy-danmaku {
-            border: 2px solid #666;
+      
             background-color: #111;
             padding: 15px;
             max-height: 200px;
@@ -422,7 +539,7 @@
             right: 0;
             margin: 0;
             padding: 2px 2px;
-            border-top: 2px dotted #666;
+            border-top: 3px dashed #666;
             background-color: black;
             font-family: 'FusionPixel', monospace;
             font-size: 10px;
@@ -503,21 +620,161 @@
         }
         
         
-        // 更新投票条位置
-        function updateVoteBar(freedomVotes, orderVotes) {
-            const totalVotes = freedomVotes + orderVotes;
-            let percentage = 50; // 默认50%
-            
-            if (totalVotes > 0) {
-                percentage = (freedomVotes / totalVotes) * 100;
-            }
+        // 更新投票条位置和标签样式（从左到右表示自由支持率100%-0%）
+        function updateVoteBar(freedomSupport, orderSupport, showAnimation = false, forceShake = false) {
+            // 直接使用传入的支持率百分比，确保在1-99%范围内
+            let freedomPercentage = Math.max(1, Math.min(99, freedomSupport || 50)); // 默认50%，限制在1-99%
             
             const divider = document.getElementById('vote-divider');
-            if (divider) {
-                divider.style.left = percentage + '%';
+            const arrow = document.getElementById('vote-arrow');
+            const threshold = document.getElementById('vote-threshold');
+            const voteBar = document.querySelector('.vote-bar');
+            
+            // 检测是否需要触发抖动效果（低支持率或高支持率）
+            const previousPercentage = parseFloat(divider?.dataset?.previousPercentage || 50);
+            const shouldShakeLow = (freedomPercentage <= 5 && freedomPercentage < previousPercentage) || forceShake;
+            const shouldShakeHigh = (freedomPercentage >= 95 && freedomPercentage > previousPercentage) || forceShake;
+            const shouldShake = shouldShakeLow || shouldShakeHigh;
+            
+            // 根据支持率计算抖动强度
+            let shakeIntensity = 'light';
+            if (freedomPercentage <= 1) {
+                shakeIntensity = 'extreme';
+            } else if (freedomPercentage <= 2) {
+                shakeIntensity = 'strong';
+            } else if (freedomPercentage <= 3.5) {
+                shakeIntensity = 'medium';
+            } else if (freedomPercentage <= 5) {
+                shakeIntensity = 'light';
+            } else if (freedomPercentage >= 99) {
+                shakeIntensity = 'extreme';
+            } else if (freedomPercentage >= 98) {
+                shakeIntensity = 'strong';
+            } else if (freedomPercentage >= 96.5) {
+                shakeIntensity = 'medium';
+            } else if (freedomPercentage >= 95) {
+                shakeIntensity = 'light';
             }
             
-            // 票数显示已移除
+            // 保存当前百分比用于下次比较
+            if (divider) {
+                divider.dataset.previousPercentage = freedomPercentage;
+            }
+            
+            if (divider) {
+                // 计算黑线位置：从左到右表示自由支持率100%-0%
+                // 所以黑线位置 = 100% - 自由支持率
+                const dividerPosition = 100 - freedomPercentage;
+                
+                // 获取当前位置
+                const currentLeft = parseFloat(divider.style.left) || 50;
+                
+                // 显示移动方向箭头（直接显示，停留1秒）
+                if (showAnimation && arrow && Math.abs(dividerPosition - currentLeft) > 0.1) {
+                    if (dividerPosition < currentLeft) {
+                        // 自由支持率增加，黑线向左移动，显示 <
+                        arrow.innerHTML = '&lt;';
+                        arrow.className = 'vote-arrow left';
+                        arrow.style.opacity = '1';
+                    } else {
+                        // 自由支持率减少，黑线向右移动，显示 >
+                        arrow.innerHTML = '&gt;';
+                        arrow.className = 'vote-arrow right';
+                        arrow.style.opacity = '1';
+                    }
+                    
+                    // 2秒后隐藏箭头
+                    setTimeout(() => {
+                        if (arrow) {
+                            arrow.style.opacity = '0';
+                        }
+                    }, 2000);
+                }
+                
+                // 设置分割线位置：标记自由支持率在进度条上的位置
+                // 左边100%自由支持率，右边0%自由支持率
+                divider.style.left = dividerPosition + '%';
+            }
+            
+            // 触发抖动效果
+            if (shouldShake && voteBar) {
+                // 移除之前的所有抖动类
+                voteBar.classList.remove('shake-light', 'shake-medium', 'shake-strong', 'shake-extreme');
+                // 强制重绘
+                void voteBar.offsetWidth;
+                // 添加对应强度的抖动类
+                voteBar.classList.add(`shake-${shakeIntensity}`);
+                
+                // 记录抖动日志
+                if (forceShake) {
+                    console.log(`Vote bar shake triggered by backend (${shakeIntensity}): freedom support at extreme and vote received`);
+                } else if (shouldShakeLow) {
+                    console.log(`Vote bar shake triggered by frontend (${shakeIntensity}): freedom support ${freedomPercentage.toFixed(1)}% and decreasing`);
+                } else if (shouldShakeHigh) {
+                    console.log(`Vote bar shake triggered by frontend (${shakeIntensity}): freedom support ${freedomPercentage.toFixed(1)}% and increasing`);
+                }
+                
+                // 根据抖动强度设置不同的动画持续时间
+                const animationDuration = {
+                    'light': 800,    // 0.4s * 2 = 0.8s
+                    'medium': 1050,  // 0.35s * 3 = 1.05s
+                    'strong': 900,   // 0.3s * 3 = 0.9s
+                    'extreme': 1000  // 0.25s * 4 = 1.0s
+                };
+                
+                // 动画结束后移除类
+                setTimeout(() => {
+                    voteBar.classList.remove(`shake-${shakeIntensity}`);
+                }, animationDuration[shakeIntensity]);
+            }
+            
+            // 更新阈值虚线显示（根据投票后的结果模式）
+            if (threshold) {
+                // 根据自由支持率判断投票后的结果模式
+                let resultMode;
+                if (freedomPercentage > 50) {
+                    resultMode = '自由';
+                } else if (freedomPercentage < 25) {
+                    resultMode = '秩序';
+                } else {
+                    // 在25%-50%之间，保持当前模式
+                    resultMode = document.querySelector('.freedom-layout').style.display !== 'none' ? '自由' : '秩序';
+                }
+                
+                if (resultMode === '自由') {
+                    // 投票后结果是自由模式时，在25%位置显示虚线（对应进度条75%位置）
+                    threshold.style.left = '75%';
+                    threshold.className = 'vote-threshold show';
+                } else if (resultMode === '秩序') {
+                    // 投票后结果是秩序模式时，在50%位置显示虚线（对应进度条50%位置）
+                    threshold.style.left = '50%';
+                    threshold.className = 'vote-threshold show';
+                }
+            }
+            
+            // 更新投票标签样式
+            updateVoteLabels();
+        }
+        
+        // 更新投票标签的激活状态
+        function updateVoteLabels() {
+            const voteLabels = document.querySelectorAll('.vote-labels');
+            if (voteLabels.length >= 2) {
+                const freedomLabel = voteLabels[0]; // 第一个是"自由"
+                const orderLabel = voteLabels[1];   // 第二个是"秩序"
+                
+                if (modeInfo.current_mode === '自由') {
+                    freedomLabel.className = 'vote-labels active';
+                    orderLabel.className = 'vote-labels inactive';
+                } else if (modeInfo.current_mode === '秩序') {
+                    freedomLabel.className = 'vote-labels inactive';
+                    orderLabel.className = 'vote-labels active';
+                } else {
+                    // 默认状态，两个都是正常颜色
+                    freedomLabel.className = 'vote-labels';
+                    orderLabel.className = 'vote-labels';
+                }
+            }
         }
         
         // 切换布局模式
@@ -550,6 +807,7 @@
                 if (freedomLayout) freedomLayout.style.display = 'none';
                 if (orderLayout) orderLayout.style.display = 'block';
                 currentMode = 'order';
+                updateVoteLabels(); // 更新标签样式
             } else {
                 // 从秩序模式切换到自由模式
                 if (currentMode === 'order' && freedomDanmakuList && orderDanmakuList) {
@@ -572,6 +830,7 @@
                 if (freedomLayout) freedomLayout.style.display = 'block';
                 if (orderLayout) orderLayout.style.display = 'none';
                 currentMode = 'freedom';
+                updateVoteLabels(); // 更新标签样式
             }
         }
         
@@ -725,7 +984,7 @@
                         // 更新模式信息
                         if (data.mode_info) {
                             modeInfo = data.mode_info;
-                            updateVoteBar(modeInfo.freedom_votes || 0, modeInfo.order_votes || 0);
+                            updateVoteBar(modeInfo.freedom_support || 50, modeInfo.order_support || 50, false);
                             if (modeInfo.current_mode !== currentMode) {
                                 switchLayout(modeInfo.current_mode);
                             }
@@ -739,7 +998,9 @@
                         // 投票更新事件
                         if (data.mode_info) {
                             modeInfo = data.mode_info;
-                            updateVoteBar(modeInfo.freedom_votes || 0, modeInfo.order_votes || 0);
+                            // 检查是否需要强制触发抖动
+                            const forceShake = data.should_shake || false;
+                            updateVoteBar(modeInfo.freedom_support || 50, modeInfo.order_support || 50, true, forceShake);
                             if (data.mode_switched && modeInfo.current_mode !== currentMode) {
                                 switchLayout(modeInfo.current_mode);
                             }
@@ -807,7 +1068,10 @@
             <div class="vote-bar-wrapper">
                 <span class="vote-labels">自由</span>
                 <div class="vote-bar">
-                    <div id="vote-divider" class="vote-divider" style="left: 50%;"></div>
+                    <div id="vote-divider" class="vote-divider" style="left: 50%;">
+                        <span id="vote-arrow" class="vote-arrow">&lt;</span>
+                    </div>
+                    <div id="vote-threshold" class="vote-threshold" style="left: 25%;"></div>
                 </div>
                 <span class="vote-labels">秩序</span>
             </div>
@@ -868,12 +1132,12 @@
         </div>
         
         <div class="instructions">
-            <div style="text-align: center; line-height: 1.5;">
-                <span class="command-key">ikjl</span> 移动 | <span class="command-key">A/B</span> 确认/取消 | <span class="command-key">开始/选择</span> 功能键
+            <div style="text-align: center; line-height: 1.5; font-size: 0.9em;">
+                <span class="command-key">ikjl</span> 上下左右 | <span class="command-key">A/B</span> 确认/取消 | <span class="command-key">开始/选择 </span> 功能键 | <span class="command-key">自由/秩序</span> 投票
             </div>
             <div style="text-align: center; font-size: 9px; color: #888;">
-                支持按键+数字组合，如：上3、a5（重复执行）<br>
-                组合指令：a3+b2+上 或 a3 b2 上（用+号或空格连接）
+                按键+数字，如：i3、a5（重复执行）<br>
+                组合指令：a3 b2 i 或 rk2 j4 i2（用空格连接,r前缀表示奔跑）
             </div>
         </div>
     </div>
