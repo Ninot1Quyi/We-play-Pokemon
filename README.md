@@ -3,6 +3,16 @@
 
 We-play-Pokemon 是一个基于 Python 的项目，旨在通过直播弹幕控制游戏操作，右侧显示接收到的所有合法指令，每次执行一条最新的指令。致敬Twitch Plays Pokémon。
 
+直播实况录制：
+
+[宝可梦·火红 直播实况录制 已通关 用时7天](https://www.bilibili.com/video/BV1DWeyz5E6J/?vd_source=ca16a8b17de72af914e0d643f6cc97e6)
+
+[宝可梦·绿宝石 直播实况  已通关 用时16天](https://www.bilibili.com/video/BV1DWeyz5E6J/?vd_source=ca16a8b17de72af914e0d643f6cc97e6)
+
+2025-9-20 21:19
+**完结撒花🎉**
+
+初代宝可梦直播
 ![screenshots1](screenshots/screenshots1.jpg)
 ![screenshots2](screenshots/screenshots2.png)
 ## 项目结构
