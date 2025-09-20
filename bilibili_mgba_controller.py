@@ -29,6 +29,16 @@ import json
 from collections import deque
 import csv
 import websockets
+import struct
+import zlib
+import hashlib
+import re
+import requests
+import qrcode
+from io import BytesIO
+import base64
+import subprocess
+import platform
 
 import aiohttp
 import blivedm
@@ -67,6 +77,7 @@ BLOCKED_WORDS = []
 
 # 时间文件
 TIME_FILE = "start_time.txt"
+GAME_DURATION_FILE = "game_duration.txt"
 
 # mGBA 窗口标题关键字
 MGBA_WINDOW_TITLE = "mGBA - POKEMON"
@@ -165,6 +176,9 @@ class DanmakuSaver:
 
 session: Optional[aiohttp.ClientSession] = None
 start_time: datetime = None
+game_duration_seconds = 0  # 累计游戏时长（秒）
+game_duration_lock = threading.Lock()  # 游戏时长锁
+game_start_time = None  # 本次程序启动时间
 danmaku_display_queue = deque(maxlen=13)  # 固定长度15的队列用于HTML显示
 danmaku_lock = threading.Lock()  # 弹幕数据锁
 sse_clients = []  # SSE客户端列表
@@ -333,8 +347,39 @@ def load_or_set_start_time():
             f.write(start_time.isoformat())
     logger.info(f"Start time: {start_time}")
 
+def load_game_duration():
+    """加载游戏时长"""
+    global game_duration_seconds
+    try:
+        if os.path.exists(GAME_DURATION_FILE):
+            with open(GAME_DURATION_FILE, 'r', encoding='utf-8') as f:
+                game_duration_seconds = int(f.read().strip())
+        else:
+            game_duration_seconds = 0
+            save_game_duration()
+        logger.info(f"Loaded game duration: {format_game_duration(game_duration_seconds)}")
+    except Exception as e:
+        logger.error(f"Error loading game duration: {e}")
+        game_duration_seconds = 0
+
+def save_game_duration():
+    """保存游戏时长到文件"""
+    try:
+        with open(GAME_DURATION_FILE, 'w', encoding='utf-8') as f:
+            f.write(str(game_duration_seconds))
+    except Exception as e:
+        logger.error(f"Error saving game duration: {e}")
+
+def format_game_duration(total_seconds):
+    """格式化游戏时长为中文显示"""
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{days}天{hours}小时{minutes}分{seconds}秒"
+
 def get_runtime():
-    """获取运行时间"""
+    """获取运行时间（保持兼容性）"""
     if start_time:
         runtime = datetime.now() - start_time
         days = runtime.days
@@ -342,6 +387,49 @@ def get_runtime():
         minutes, seconds = divmod(remainder, 60)
         return f"{days}d {hours:02d}h {minutes:02d}m {seconds:02d}s"
     return "0d 00h 00m 00s"
+
+def get_game_duration():
+    """获取游戏时长（新的时长显示）"""
+    with game_duration_lock:
+        current_time = time.time()
+        if game_start_time:
+            # 当前会话时长 + 历史累计时长
+            session_duration = int(current_time - game_start_time)
+            total_duration = game_duration_seconds + session_duration
+            return format_game_duration(total_duration)
+        else:
+            return format_game_duration(game_duration_seconds)
+
+def game_duration_thread():
+    """游戏时长更新线程，每秒更新一次"""
+    global game_duration_seconds, game_start_time
+    logger.info("Game duration thread started")
+    
+    # 设置本次启动时间
+    game_start_time = time.time()
+    
+    while True:
+        try:
+            time.sleep(1)  # 每秒更新一次
+            
+            with game_duration_lock:
+                current_time = time.time()
+                if game_start_time:
+                    # 计算本次会话时长
+                    session_duration = int(current_time - game_start_time)
+                    # 更新总时长 = 历史累计时长 + 本次会话时长
+                    total_duration = game_duration_seconds + session_duration
+                    
+                    # 每秒保存一次到文件
+                    try:
+                        with open(GAME_DURATION_FILE, 'w', encoding='utf-8') as f:
+                            f.write(str(total_duration))
+                    except Exception as e:
+                        logger.error(f"Error saving game duration: {e}")
+                        
+        except Exception as e:
+            logger.error(f"Error in game duration thread: {e}")
+            time.sleep(1)
 
 def broadcast_danmaku(danmaku_data):
     """向所有SSE客户端广播弹幕数据"""
@@ -501,16 +589,16 @@ def press_key(key: str, duration: float = 0.1):
     except Exception as e:
         logger.error(f"Failed to press key {key}: {e}")
 
-def hold_key(key: str, duration: float = 1.0):
-    """长按按键指定时间"""
-    try:
-        pyautogui.keyDown(key)
-        logger.info(f"Started holding key: {key} for {duration}s")
-        time.sleep(duration)
-        pyautogui.keyUp(key)
-        logger.info(f"Released key: {key} after {duration}s")
-    except Exception as e:
-        logger.error(f"Failed to hold key {key}: {e}")
+# def hold_key(key: str, duration: float = 1.0):
+#     """长按按键指定时间"""
+#     try:
+#         pyautogui.keyDown(key)
+#         logger.info(f"Started holding key: {key} for {duration}s")
+#         time.sleep(duration)
+#         pyautogui.keyUp(key)
+#         logger.info(f"Released key: {key} after {duration}s")
+#     except Exception as e:
+#         logger.error(f"Failed to hold key {key}: {e}")
 
 def control_mgba_run(command: str):
     """奔跑模式控制 mGBA（长按B键的同时执行移动指令）"""
@@ -559,8 +647,9 @@ def control_mgba_run(command: str):
             digit = sub_cmd[-1]
             base_command = sub_cmd[:-1]
             repeat_count = int(digit)
-            if repeat_count < 1 or repeat_count > 9:
-                repeat_count = 1
+            if repeat_count < 1 or repeat_count > 3:
+                logger.warning(f"Run command number out of range (1-3), ignored: {sub_cmd}")
+                continue  # 跳过这个无效的子指令
         
         # 只允许移动指令 i(上), j(左), k(下), l(右)
         if base_command in ['i', 'j', 'k', 'l']:
@@ -599,94 +688,143 @@ def control_mgba_run(command: str):
     else:
         logger.warning(f"No valid movement commands in run command: r {command}")
 
-def control_mgba_hold(command: str):
-    """长按指令控制 mGBA（支持组合长按指令如 ii2 ll3 表示长按i键2秒，再长按l键3秒）"""
-    global executing_command
+# def control_mgba_hold(command: str):
+#     """长按指令控制 mGBA（支持组合长按指令如 ii2 ll3 表示长按i键2秒，再长按l键3秒）"""
+#     global executing_command
+#     
+#     command = command.strip().lower()
+#     
+#     # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
+#     if '+' in command:
+#         # 按 '+' 分割组合指令，最多3个子指令
+#         sub_commands = command.split('+', 2)
+#     else:
+#         # 按空格分割组合指令，最多3个子指令
+#         sub_commands = command.split(' ', 2)
+#     
+#     valid_sub_commands = []
+#     
+#     # 解析每个子指令
+#     for sub_cmd in sub_commands:
+#         sub_cmd = sub_cmd.strip()
+#         if not sub_cmd:
+#             continue
+#         
+#         # 检查是否是长按指令格式（如ii、ii2、jj3等）
+#         if len(sub_cmd) >= 2:
+#             # 检查是否是双字符开头（如ii、jj、kk、ll等）
+#             first_char = sub_cmd[0]
+#             second_char = sub_cmd[1]
+#             
+#             if first_char == second_char and first_char in COMMAND_TO_KEY:
+#                 # 获取长按时间，默认1秒
+#                 hold_duration = 1.0
+#                 remaining_chars = sub_cmd[2:]
+#                 
+#                 if remaining_chars.isdigit():
+#                     duration_value = int(remaining_chars)
+#                     if 1 <= duration_value <= 9:
+#                         hold_duration = float(duration_value)
+#                 
+#                 valid_sub_commands.append((first_char, hold_duration))
+#             else:
+#                 logger.warning(f"Invalid hold command format: {sub_cmd}")
+#         else:
+#             logger.warning(f"Hold command too short: {sub_cmd}")
+#     
+#     # 如果有合法子指令，依次执行
+#     if valid_sub_commands:
+#         with execution_lock:
+#             executing_command = True
+#             try:
+#                 if not activate_mgba_window():
+#                     logger.warning("mGBA window not found or activation failed, skipping hold command")
+#                 else:
+#                     for base_command, hold_duration in valid_sub_commands:
+#                         key = COMMAND_TO_KEY[base_command]
+#                         hold_key(key, hold_duration)
+#                         time.sleep(0.1)  # 指令之间的短暂间隔
+#                     logger.info(f"Executed hold command: {command}")
+#             finally:
+#                 executing_command = False
+#     else:
+#         logger.warning(f"No valid hold commands in: {command}")
+
+def calculate_vote_weight(support_rate):
+    """根据支持率计算投票权重，距离切换线越近权重越低，距离越远权重越高(最大10)"""
+    # 自由模式切换线：25%，秩序模式切换线：50%
+    # 计算距离切换线的距离，距离越远权重越高
     
-    command = command.strip().lower()
-    
-    # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
-    if '+' in command:
-        # 按 '+' 分割组合指令，最多3个子指令
-        sub_commands = command.split('+', 2)
+    if support_rate <= 50.0:
+        # 自由支持率<=50%时，距离自由模式切换线(25%)的距离
+        distance_to_switch = abs(support_rate - 25.0)
     else:
-        # 按空格分割组合指令，最多3个子指令
-        sub_commands = command.split(' ', 2)
+        # 自由支持率>50%时，距离秩序模式切换线(50%)的距离  
+        distance_to_switch = abs(support_rate - 50.0)
     
-    valid_sub_commands = []
-    
-    # 解析每个子指令
-    for sub_cmd in sub_commands:
-        sub_cmd = sub_cmd.strip()
-        if not sub_cmd:
-            continue
-        
-        # 检查是否是长按指令格式（如ii、ii2、jj3等）
-        if len(sub_cmd) >= 2:
-            # 检查是否是双字符开头（如ii、jj、kk、ll等）
-            first_char = sub_cmd[0]
-            second_char = sub_cmd[1]
-            
-            if first_char == second_char and first_char in COMMAND_TO_KEY:
-                # 获取长按时间，默认1秒
-                hold_duration = 1.0
-                remaining_chars = sub_cmd[2:]
-                
-                if remaining_chars.isdigit():
-                    duration_value = int(remaining_chars)
-                    if 1 <= duration_value <= 9:
-                        hold_duration = float(duration_value)
-                
-                valid_sub_commands.append((first_char, hold_duration))
-            else:
-                logger.warning(f"Invalid hold command format: {sub_cmd}")
-        else:
-            logger.warning(f"Hold command too short: {sub_cmd}")
-    
-    # 如果有合法子指令，依次执行
-    if valid_sub_commands:
-        with execution_lock:
-            executing_command = True
-            try:
-                if not activate_mgba_window():
-                    logger.warning("mGBA window not found or activation failed, skipping hold command")
-                else:
-                    for base_command, hold_duration in valid_sub_commands:
-                        key = COMMAND_TO_KEY[base_command]
-                        hold_key(key, hold_duration)
-                        time.sleep(0.1)  # 指令之间的短暂间隔
-                    logger.info(f"Executed hold command: {command}")
-            finally:
-                executing_command = False
-    else:
-        logger.warning(f"No valid hold commands in: {command}")
+    # 将距离映射到权重1-10，距离越远权重越高
+    # 最大距离约为49(99%-50%或1%-50%)，映射到权重10
+    # 最小距离为0(正好在切换线上)，映射到权重1
+    weight = 1 + (distance_to_switch / 49.0) * 9.0
+    weight = max(1.0, min(10.0, weight))  # 确保权重在1-10范围内
+    return weight
 
 def add_vote(vote_type):
-    """添加投票并实时更新支持率"""
-    global freedom_support
+    """添加投票并实时更新支持率（加权方式）"""
+    global freedom_support, current_mode
     
     with vote_lock:
         previous_support = freedom_support
         should_shake = False
+        order_support = 100.0 - freedom_support
+        
+        # 计算当前双方的投票权重
+        freedom_weight = calculate_vote_weight(freedom_support)
+        order_weight = calculate_vote_weight(order_support)
+        
+        # 根据当前激活的模式和投票类型决定投票影响
+        vote_impact = 0
+        used_weight = 0
         
         if vote_type == "自由":
             # 检测是否需要触发抖动：当前已经是最高值且还要继续增加
             if freedom_support >= 99.0:
                 should_shake = True
                 logger.info(f"Vote bar shake triggered: freedom_support at maximum ({freedom_support:.1f}%) and freedom vote received")
-            freedom_support += 1.0
+            
+            if current_mode == "自由":
+                # 当前是自由模式，接收自由票+2
+                vote_impact = 2.0
+                used_weight = 2.0
+            else:
+                # 当前是秩序模式，接收自由票使用完整权重
+                vote_impact = freedom_weight
+                used_weight = freedom_weight
+            
+            freedom_support += vote_impact
+            
         elif vote_type == "秩序":
             # 检测是否需要触发抖动：当前已经是最小值且还要继续减少
             if freedom_support <= 1.0:
                 should_shake = True
                 logger.info(f"Vote bar shake triggered: freedom_support at minimum ({freedom_support:.1f}%) and order vote received")
-            freedom_support -= 1.0
+            
+            if current_mode == "秩序":
+                # 当前是秩序模式，接收秩序票只+1（对freedom_support来说是-1）
+                vote_impact = -1.0
+                used_weight = 1.0
+            else:
+                # 当前是自由模式，接收秩序票使用完整权重
+                vote_impact = -order_weight
+                used_weight = order_weight
+            
+            freedom_support += vote_impact
         
         # 确保支持率在合理范围内（1-99%）
         freedom_support = max(1.0, min(99.0, freedom_support))
         
         order_support = 100.0 - freedom_support
-        logger.info(f"Added vote: {vote_type}. Current support - 自由: {freedom_support:.1f}%, 秩序: {order_support:.1f}%")
+        logger.info(f"Added weighted vote: {vote_type} (weight: {used_weight:.1f}, mode: {current_mode}). Current support - 自由: {freedom_support:.1f}%, 秩序: {order_support:.1f}%")
         
         return should_shake
 
@@ -820,70 +958,81 @@ def trigger_vote_reset(runtime_hours=None):
         for client in disconnected_clients:
             sse_clients.remove(client)
 
-def hourly_vote_reset_thread():
-    """每小时重置投票结果线程"""
-    global freedom_support, start_time
-    logger.info("Hourly vote reset thread started")
+def order_mode_timeout_thread():
+    """秩序模式超时线程 - 秩序模式维持3分钟后强制切换为自由模式"""
+    global freedom_support, current_mode
+    logger.info("Order mode timeout thread started")
     
-    last_reset_hour = -1  # 记录上次重置的小时
+    order_mode_start_time = None  # 记录秩序模式开始时间
     
     while True:
         try:
             if not VOTING_ENABLED:
-                time.sleep(60)  # 如果投票功能未开启，每分钟检查一次
+                time.sleep(10)  # 如果投票功能未开启，每10秒检查一次
                 continue
-                
-            # 获取当前时间相对于开始时间的运行时间
-            current_timestamp = time.time()
-            if start_time:
-                # 将datetime对象转换为时间戳
-                start_timestamp = start_time.timestamp()
-                runtime_seconds = int(current_timestamp - start_timestamp)
-                runtime_hours = runtime_seconds // 3600
-                
-                # 检查是否到了新的整点小时
-                if runtime_hours > last_reset_hour and runtime_hours > 0:
-                    last_reset_hour = runtime_hours
-                    
-                    # 重置投票支持率为50%
-                    with vote_lock:
-                        old_freedom_support = freedom_support
-                        freedom_support = 50.0
-                        
-                    logger.info(f"Hourly vote reset: Runtime {runtime_hours}h reached. Reset freedom_support from {old_freedom_support:.1f}% to 50.0%")
-                    
-                    # 发送投票更新消息给前端
-                    with mode_lock:
-                        vote_update = {
-                            'type': 'vote_update',
-                            'mode_info': {
-                                'current_mode': current_mode,
-                                'freedom_support': 50.0,
-                                'order_support': 50.0
-                            },
-                            'mode_switched': False,
-                            'should_shake': False,
-                            'reset_message': f'投票已重置'
-                        }
-                    
-                    # 广播投票更新给所有SSE客户端
-                    with sse_lock:
-                        disconnected_clients = []
-                        for client_queue in sse_clients:
-                            try:
-                                client_queue.put(vote_update)
-                            except:
-                                disconnected_clients.append(client_queue)
-                        
-                        # 清理断开的客户端
-                        for client in disconnected_clients:
-                            sse_clients.remove(client)
             
-            time.sleep(60)  # 每分钟检查一次
+            with mode_lock:
+                current_mode_check = current_mode
+            
+            # 检查当前是否为秩序模式
+            if current_mode_check == "秩序":
+                # 如果刚进入秩序模式，记录开始时间
+                if order_mode_start_time is None:
+                    order_mode_start_time = time.time()
+                    logger.info("Order mode started, 3-minute timeout timer activated")
+                else:
+                    # 检查秩序模式是否已经维持了3分钟（180秒）
+                    current_time = time.time()
+                    order_duration = current_time - order_mode_start_time
+                    
+                    if order_duration >= 180:  # 3分钟 = 180秒
+                        # 强制切换为自由模式
+                        with vote_lock:
+                            old_freedom_support = freedom_support
+                            freedom_support = 75.0  # 设置为75%确保切换到自由模式
+                        
+                        logger.info(f"Order mode timeout: 3 minutes reached. Forcing switch to freedom mode. Reset freedom_support from {old_freedom_support:.1f}% to 75.0%")
+                        
+                        # 发送模式切换消息给前端
+                        with mode_lock:
+                            vote_update = {
+                                'type': 'vote_update',
+                                'mode_info': {
+                                    'current_mode': '自由',
+                                    'freedom_support': 75.0,
+                                    'order_support': 25.0
+                                },
+                                'mode_switched': True,
+                                'should_shake': False,
+                                'reset_message': '3分钟结束      切换自由'
+                            }
+                        
+                        # 广播投票更新给所有SSE客户端
+                        with sse_lock:
+                            disconnected_clients = []
+                            for client_queue in sse_clients:
+                                try:
+                                    client_queue.put(vote_update)
+                                except:
+                                    disconnected_clients.append(client_queue)
+                            
+                            # 清理断开的客户端
+                            for client in disconnected_clients:
+                                sse_clients.remove(client)
+                        
+                        # 重置计时器
+                        order_mode_start_time = None
+            else:
+                # 如果不是秩序模式，重置计时器
+                if order_mode_start_time is not None:
+                    logger.info("Switched out of order mode, timeout timer reset")
+                    order_mode_start_time = None
+            
+            time.sleep(10)  # 每10秒检查一次
             
         except Exception as e:
-            logger.error(f"Hourly vote reset thread error: {e}")
-            time.sleep(60)  # 出错时等待1分钟后继续
+            logger.error(f"Order mode timeout thread error: {e}")
+            time.sleep(10)  # 出错时等待10秒后继续
 
 def config_hot_reload_thread():
     """配置热更新线程，每120秒从配置文件中读取最新的ORDER_INTERVAL和屏蔽词"""
@@ -974,10 +1123,10 @@ def order_execution_thread():
                 # 奔跑指令：移除run:前缀并调用奔跑控制函数
                 actual_command = winning_command[4:]  # 移除"run:"前缀
                 control_mgba_run(actual_command)
-            elif winning_command.startswith('hold:'):
-                # 长按指令：移除hold:前缀并调用长按控制函数
-                actual_command = winning_command[5:]  # 移除"hold:"前缀
-                control_mgba_hold(actual_command)
+            # elif winning_command.startswith('hold:'):
+            #     # 长按指令：移除hold:前缀并调用长按控制函数
+            #     actual_command = winning_command[5:]  # 移除"hold:"前缀
+            #     control_mgba_hold(actual_command)
             else:
                 # 普通指令：直接调用control_mgba
                 control_mgba(winning_command)
@@ -1018,8 +1167,8 @@ def generate_random_command():
     for _ in range(random.randint(1, 3)):
         # 随机选择基础指令
         base_cmd = random.choice(base_commands)
-        # 随机选择重复次数 0-9
-        repeat_count = random.randint(0, 9)
+        # 随机选择重复次数 0-3
+        repeat_count = random.randint(0, 3)
         # 组合指令
         if repeat_count == 0:
             selected_commands.append(base_cmd)
@@ -1141,8 +1290,9 @@ def control_mgba(command: str):
             digit = sub_cmd[-1]
             base_command = sub_cmd[:-1]
             repeat_count = int(digit)
-            if repeat_count < 1 or repeat_count > 9:
-                repeat_count = 1
+            if repeat_count < 1 or repeat_count > 3:
+                logger.warning(f"Combined command number out of range (1-3), ignored: {sub_cmd}")
+                continue  # 跳过这个无效的子指令
         
         if base_command in COMMAND_TO_KEY:
             valid_sub_commands.append((base_command, repeat_count))
@@ -1169,21 +1319,489 @@ def control_mgba(command: str):
         logger.warning(f"No valid commands in: {command}")
 
 
-async def run_bilibili_wss_client():
-    """运行 Bilibili WSS 模式弹幕监听"""
-    client = blivedm.BLiveClient(ROOM_ID, session=session)
-    handler = DanmakuHandler()
-    client.set_handler(handler)
+class BilibiliWebSocketClient:
+    """基于bilibili_danmu_bot.py的WebSocket客户端，用于获取完整用户名"""
     
-    client.start()
+    def __init__(self, room_id):
+        self.room_id = str(room_id)
+        self.websocket = None
+        self.is_connected = False
+        self.danmu_token = ''
+        
+        # 登录相关
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        self.qrcode_key = ""
+        self.cookies = ""
+        self.csrf_token = ""
+        self.uid = ""
+        self.buvid3 = ""
+        self.buvid4 = ""
+        self.wbi_mixin_key = ""
+        
+    def generate_qr_login(self) -> str:
+        """生成二维码登录链接"""
+        try:
+            url = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
+            response = self.session.get(url)
+            data = response.json()
+            
+            if data['code'] != 0:
+                raise Exception(f"获取二维码失败: {data['message']}")
+            
+            qr_url = data['data']['url']
+            self.qrcode_key = data['data']['qrcode_key']
+            
+            # 生成二维码在命令行中显示
+            qr = qrcode.QRCode(version=1, box_size=1, border=2)
+            qr.add_data(qr_url)
+            qr.make(fit=True)
+            
+            # 在命令行中打印二维码
+            print("\n" + "=" * 50)
+            print("哔哩哔哩登录二维码")
+            print("=" * 50)
+            qr.print_ascii(invert=True)
+            print("=" * 50)
+            print("请使用哔哩哔哩APP扫描上方二维码登录")
+            print("或者打开下方链接在手机上登录:")
+            print(qr_url)
+            print("=" * 50 + "\n")
+            
+            # 同时保存为文件作为备用
+            try:
+                img = qr.make_image(fill_color="black", back_color="white")
+                qr_filename = os.path.join(os.getcwd(), "bilibili_login_qr.png")
+                img.save(qr_filename)
+                logger.info(f"二维码也已保存为文件: {qr_filename}")
+            except Exception as save_error:
+                logger.warning(f"保存二维码文件失败: {save_error}")
+            
+            return qr_url
+            
+        except Exception as e:
+            logger.error(f"生成二维码失败: {e}")
+            return ""
+    
+    def check_qr_login(self) -> bool:
+        """检查二维码登录状态"""
+        try:
+            url = f"https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={self.qrcode_key}"
+            response = self.session.get(url)
+            data = response.json()
+            
+            if data['code'] != 0:
+                logger.error(f"检查登录状态失败: {data['message']}")
+                return False
+            
+            code = data['data']['code']
+            
+            if code == 0:  # 登录成功
+                logger.info("扫码登录成功！")
+                
+                # 获取cookies
+                cookies = []
+                for cookie in response.cookies:
+                    cookies.append(f"{cookie.name}={cookie.value}")
+                
+                # 获取buvid
+                self._get_buvid()
+                
+                # 添加buvid到cookies
+                if self.buvid3:
+                    cookies.append(f"buvid3={self.buvid3}")
+                if self.buvid4:
+                    cookies.append(f"buvid4={self.buvid4}")
+                
+                # 添加刷新token
+                refresh_token = data['data'].get('refresh_token', '')
+                if refresh_token:
+                    cookies.append(f"ac_time_value={refresh_token}")
+                
+                self.cookies = "; ".join(cookies)
+                self.session.headers.update({'Cookie': self.cookies})
+                
+                # 提取csrf_token和uid
+                self._extract_user_info()
+                
+                return True
+                
+            elif code == 86038:  # 二维码已失效
+                logger.warning("二维码已失效")
+                return False
+            elif code == 86090:  # 已扫描但未确认
+                logger.info("等待确认...")
+                return False
+            elif code == 86101:  # 未扫描
+                logger.info("等待扫描...")
+                return False
+            else:
+                logger.warning(f"未知状态码: {code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"检查登录状态异常: {e}")
+            return False
+    
+    def _get_buvid(self):
+        """获取buvid"""
+        try:
+            url = "https://api.bilibili.com/x/frontend/finger/spi"
+            response = self.session.get(url)
+            data = response.json()
+            
+            if data['code'] == 0:
+                self.buvid3 = data['data'].get('b_3', '')
+                self.buvid4 = data['data'].get('b_4', '')
+                logger.info(f"获取到BUVID: {self.buvid3}, {self.buvid4}")
+                
+        except Exception as e:
+            logger.error(f"获取buvid失败: {e}")
+    
+    def _extract_user_info(self):
+        """从 cookies 中提取用户信息"""
+        try:
+            cookie_dict = {}
+            for item in self.cookies.split('; '):
+                if '=' in item:
+                    key, value = item.split('=', 1)
+                    cookie_dict[key] = value
+            
+            self.csrf_token = cookie_dict.get('bili_jct', '')
+            self.uid = cookie_dict.get('DedeUserID', '')
+            
+            logger.info(f"用户信息: UID={self.uid}, CSRF={self.csrf_token}")
+            
+            # 获取WBI签名密钥
+            self._get_wbi_key()
+            
+        except Exception as e:
+            logger.error(f"提取用户信息失败: {e}")
+    
+    def _get_wbi_key(self):
+        """获取WBI签名密钥"""
+        try:
+            url = "https://api.bilibili.com/x/web-interface/nav"
+            response = self.session.get(url)
+            data = response.json()
+            
+            if data['code'] != 0:
+                logger.warning("获取WBI密钥失败，使用默认配置")
+                return
+                
+            wbi_img = data['data']['wbi_img']
+            img_url = wbi_img['img_url']
+            sub_url = wbi_img['sub_url']
+            
+            # 提取32位字符串
+            img_key = re.search(r'/(\w{32})\.png', img_url).group(1)
+            sub_key = re.search(r'/(\w{32})\.png', sub_url).group(1)
+            wbi_key = img_key + sub_key
+            
+            # 重排序生成mixin key
+            mixin_key_enc_tab = [
+                46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+                33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+                61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11,
+                36, 20, 34, 44, 52
+            ]
+            
+            self.wbi_mixin_key = ''.join([wbi_key[i] for i in mixin_key_enc_tab])[:32]
+            logger.info(f"WBI密钥获取成功: {self.wbi_mixin_key}")
+            
+        except Exception as e:
+            logger.error(f"获取WBI密钥失败: {e}")
+    
+    def _wbi_sign(self, params: str) -> str:
+        """生成WBI签名"""
+        if not self.wbi_mixin_key:
+            return params
+            
+        # 添加时间戳
+        if 'wts=' not in params:
+            params += f"&wts={int(time.time())}"
+        
+        # 按键名排序
+        param_list = params.split('&')
+        param_list.sort()
+        sorted_params = '&'.join(param_list)
+        
+        # 计算MD5
+        md5_hash = hashlib.md5((sorted_params + self.wbi_mixin_key).encode()).hexdigest()
+        return params + f"&w_rid={md5_hash}"
+    
+    def wait_for_login(self, timeout: int = 300) -> bool:
+        """等待用户扫码登录"""
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            if self.check_qr_login():
+                return True
+            time.sleep(3)
+        
+        logger.error("登录超时")
+        return False
+    
+    def get_room_info(self):
+        """获取房间信息"""
+        try:
+            url = f"https://api.live.bilibili.com/room/v1/Room/get_info?room_id={self.room_id}"
+            response = self.session.get(url)
+            data = response.json()
+            
+            if data['code'] != 0:
+                raise Exception(f"获取房间信息失败: {data['message']}")
+            
+            room_info = data['data']
+            self.room_id = str(room_info['room_id'])  # 真实房间号
+            
+            title = room_info.get('title', '未知标题')
+            uname = room_info.get('uname') or room_info.get('anchor_info', {}).get('base_info', {}).get('uname', '未知主播')
+            
+            logger.info(f"房间信息: {title} - 主播: {uname}")
+            return room_info
+            
+        except Exception as e:
+            logger.error(f"获取房间信息失败: {e}")
+            return {}
+    
+    def get_danmu_info(self):
+        """获取弹幕服务器信息"""
+        try:
+            # 添加必要的headers和cookies
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Referer': f'https://live.bilibili.com/{self.room_id}',
+                'Origin': 'https://live.bilibili.com'
+            }
+            
+            # 使用WBI签名
+            params = f"id={self.room_id}&type=0"
+            if self.wbi_mixin_key:
+                params = self._wbi_sign(params)
+            
+            url = f"https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?{params}"
+            
+            # 如果有cookies，添加到请求中
+            if self.cookies:
+                headers['Cookie'] = self.cookies
+                
+            response = self.session.get(url, headers=headers)
+            data = response.json()
+            
+            if data['code'] != 0:
+                logger.warning(f"获取弹幕服务器信息失败 (code: {data['code']}): {data.get('message', '未知错误')}")
+                logger.info("尝试使用默认弹幕服务器配置...")
+                
+                # 返回默认配置
+                return {
+                    'token': '',
+                    'host_list': [
+                        {'host': 'broadcastlv.chat.bilibili.com', 'port': 2243, 'wss_port': 443, 'ws_port': 2244}
+                    ]
+                }
+            
+            return data['data']
+            
+        except Exception as e:
+            logger.error(f"获取弹幕服务器信息失败: {e}")
+            logger.info("使用默认弹幕服务器配置...")
+            # 返回默认配置作为兜底
+            return {
+                'token': '',
+                'host_list': [
+                    {'host': 'broadcastlv.chat.bilibili.com', 'port': 2243, 'wss_port': 443, 'ws_port': 2244}
+                ]
+            }
+    
+    def _make_packet(self, data: bytes, operation: int) -> bytes:
+        """构造数据包"""
+        body = data
+        header = struct.pack('>IHHII', 
+                           16 + len(body),  # 总长度
+                           16,              # 头部长度
+                           1,               # 协议版本
+                           operation,       # 操作码
+                           1)               # sequence
+        return header + body
+    
+    def _send_auth_packet(self):
+        """发送认证包"""
+        auth_data = {
+            "uid": int(self.uid) if self.uid else 0,
+            "roomid": int(self.room_id),
+            "protover": 2,
+            "platform": "web",
+            "type": 2,
+            "key": self.danmu_token,
+            "buvid": self.buvid3
+        }
+        
+        packet = self._make_packet(json.dumps(auth_data).encode(), 7)  # OP_AUTH
+        return packet
+    
+    def _send_heartbeat_packet(self):
+        """发送心跳包"""
+        packet = self._make_packet(b'[object Object]', 2)  # OP_HEARTBEAT
+        return packet
+    
+    def _parse_packet(self, data: bytes):
+        """解析数据包"""
+        offset = 0
+        while offset < len(data):
+            if offset + 16 > len(data):
+                break
+                
+            # 解析包头
+            header = struct.unpack('>IHHII', data[offset:offset+16])
+            pack_len, header_len, proto_ver, operation, sequence = header
+            
+            # 获取包体
+            body = data[offset + header_len:offset + pack_len]
+            
+            if operation == 8:  # 认证回复
+                result = json.loads(body.decode())
+                if result.get('code') == 0:
+                    logger.info("WebSocket认证成功")
+                else:
+                    logger.error(f"WebSocket认证失败: {result}")
+                    
+            elif operation == 3:  # 心跳回复
+                popularity = struct.unpack('>I', body)[0]
+                logger.debug(f"当前人气值: {popularity}")
+                
+            elif operation == 5:  # 普通消息
+                if proto_ver == 2:  # zlib压缩
+                    try:
+                        body = zlib.decompress(body)
+                        self._parse_packet(body)
+                    except:
+                        logger.error("zlib解压失败")
+                elif proto_ver == 0:  # 未压缩
+                    try:
+                        msg = json.loads(body.decode())
+                        self._handle_message(msg)
+                    except:
+                        logger.error(f"解析消息失败: {body}")
+            
+            offset += pack_len
+    
+    def _handle_message(self, msg: dict):
+        """处理消息"""
+        cmd = msg.get('cmd', '')
+        
+        if cmd == 'DANMU_MSG':  # 弹幕消息
+            info = msg['info']
+            content = info[1]  # 弹幕内容
+            user_info = info[2]  # 用户信息
+            username = user_info[1]  # 完整用户名
+            uid = user_info[0]  # 用户ID
+            
+            logger.info(f"[哔哩哔哩] {username}: {content}")
+            process_danmaku_command(username, content, self.room_id)
+                
+        elif cmd == 'SEND_GIFT':  # 礼物消息
+            data = msg['data']
+            username = data['uname']
+            gift_name = data['giftName']
+            num = data['num']
+            
+            logger.info(f"[礼物] {username} 送出 {gift_name} x{num}")
+                
+        elif cmd == 'INTERACT_WORD':  # 进入直播间
+            data = msg['data']
+            username = data['uname']
+            
+            logger.info(f"[进入] {username} 进入直播间")
+    
+    async def connect_websocket(self):
+        """连接WebSocket"""
+        try:
+            # 检查是否已登录，如果没有则尝试登录
+            if not self.cookies:
+                logger.info("未检测到登录信息，尝试生成二维码登录...")
+                qr_file = self.generate_qr_login()
+                if qr_file:
+                    logger.info("请扫描二维码登录，等待登录成功...")
+                    if not self.wait_for_login(timeout=300):
+                        logger.error("登录失败或超时，将使用默认配置尝试连接")
+                else:
+                    logger.error("生成二维码失败，将使用默认配置尝试连接")
+            
+            # 获取房间信息
+            room_info = self.get_room_info()
+            if not room_info:
+                logger.warning("获取房间信息失败，但将继续尝试连接")
+            
+            # 获取弹幕服务器信息
+            danmu_info = self.get_danmu_info()
+            if not danmu_info:
+                logger.error("获取弹幕服务器信息失败")
+                return False
+            
+            self.danmu_token = danmu_info['token']
+            host_list = danmu_info['host_list']
+            
+            # 选择服务器
+            if host_list:
+                host = host_list[0]['host']
+                port = host_list[0]['wss_port']
+                ws_url = f"wss://{host}:{port}/sub"
+            else:
+                ws_url = "wss://broadcastlv.chat.bilibili.com:443/sub"
+            
+            logger.info(f"连接弹幕服务器: {ws_url}")
+            
+            # 连接WebSocket
+            self.websocket = await websockets.connect(ws_url)
+            self.is_connected = True
+            
+            # 发送认证包
+            auth_packet = self._send_auth_packet()
+            await self.websocket.send(auth_packet)
+            
+            # 启动心跳
+            asyncio.create_task(self._heartbeat_loop())
+            
+            # 接收消息
+            async for message in self.websocket:
+                self._parse_packet(message)
+                
+        except Exception as e:
+            logger.error(f"WebSocket连接失败: {e}")
+            self.is_connected = False
+    
+    async def _heartbeat_loop(self):
+        """心跳循环"""
+        while self.is_connected and self.websocket:
+            try:
+                heartbeat_packet = self._send_heartbeat_packet()
+                await self.websocket.send(heartbeat_packet)
+                await asyncio.sleep(30)  # 30秒心跳
+            except:
+                break
+    
+    async def disconnect(self):
+        """断开连接"""
+        self.is_connected = False
+        if self.websocket:
+            await self.websocket.close()
+            self.websocket = None
+
+async def run_bilibili_wss_client():
+    """运行 Bilibili WSS 模式弹幕监听（使用自定义WebSocket客户端）"""
+    client = BilibiliWebSocketClient(ROOM_ID)
+    
     logger.info(f"Started Bilibili WSS client for room {ROOM_ID}")
     
     try:
-        await client.join()
+        await client.connect_websocket()
     except Exception as e:
         logger.error(f"Bilibili WSS client error: {e}")
     finally:
-        await client.stop_and_close()
+        await client.disconnect()
         logger.info("Bilibili WSS client stopped")
 
 async def run_bilibili_openlive_client():
@@ -1418,8 +2036,9 @@ def process_danmaku_command(username: str, command: str, room_id: str = None, pl
                     digit_part = sub_cmd[len(base_command):]
                     if digit_part.isdigit():
                         repeat_count = int(digit_part)
-                        if repeat_count < 1 or repeat_count > 9:
-                            repeat_count = 1
+                        if repeat_count < 1 or repeat_count > 3:
+                            logger.warning(f"Display command number out of range (1-3), ignored: {sub_cmd}")
+                            continue  # 跳过这个无效的子指令
                 
                 key = COMMAND_TO_KEY.get(base_command, base_command)
                 display_cmd = KEY_TO_DISPLAY.get(key, base_command)
@@ -1504,140 +2123,140 @@ def process_danmaku_command(username: str, command: str, room_id: str = None, pl
             logger.warning(f"Invalid run command format: {command}. Run commands can only contain i,j,k,l and numbers.")
             return  # 无效的奔跑指令，直接返回，不继续处理为普通指令
     
-    # 检查是否是长按指令（如ii、ii2、jj3等）
-    is_hold_command = False
-    
-    # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
-    if '+' in command_lower:
-        hold_sub_commands = command_lower.split('+', 2)
-    else:
-        hold_sub_commands = command_lower.split(' ', 2)
-    
-    # 检查是否所有子指令都是长按格式
-    all_hold_commands = True
-    for sub_cmd in hold_sub_commands:
-        sub_cmd = sub_cmd.strip()
-        if not sub_cmd:
-            continue
-        
-        # 检查是否是长按指令格式（如ii、ii2、jj3等）
-        if len(sub_cmd) >= 2:
-            first_char = sub_cmd[0]
-            second_char = sub_cmd[1]
-            
-            if first_char == second_char and first_char in COMMAND_TO_KEY:
-                # 检查后面是否只有数字或为空
-                remaining_chars = sub_cmd[2:]
-                if remaining_chars == '' or remaining_chars.isdigit():
-                    continue  # 这是一个有效的长按指令
-        
-        # 如果到这里，说明不是长按指令格式
-        all_hold_commands = False
-        break
-    
-    if all_hold_commands and any(sub_cmd.strip() for sub_cmd in hold_sub_commands):
-        is_hold_command = True
-        
-        # 获取当前时间戳
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # 生成显示用的指令
-        display_commands = []
-        for sub_cmd in hold_sub_commands:
-            sub_cmd = sub_cmd.strip()
-            if not sub_cmd:
-                continue
-            
-            first_char = sub_cmd[0]
-            hold_duration = 1.0
-            remaining_chars = sub_cmd[2:]
-            
-            if remaining_chars.isdigit():
-                duration_value = int(remaining_chars)
-                if 1 <= duration_value <= 9:
-                    hold_duration = float(duration_value)
-            
-            key = COMMAND_TO_KEY.get(first_char, first_char)
-            display_cmd = KEY_TO_DISPLAY.get(key, first_char)
-            if hold_duration > 1.0:
-                display_cmd += f"长按{int(hold_duration)}s"
-            else:
-                display_cmd += "长按1s"
-            display_commands.append(display_cmd)
-        
-        # 根据原始指令格式决定显示格式
-        if '+' in original_command:
-            display_command = ' + '.join(display_commands)
-        else:
-            display_command = ' + '.join(display_commands)
-        
-        # 根据当前模式处理长按指令
-        executed = 0
-        with mode_lock:
-            if current_mode == "自由":
-                # 自由模式：直接执行长按指令
-                with latest_command_lock:
-                    if not executing_command:
-                        # 直接执行长按指令，不通过latest_command队列
-                        threading.Thread(target=control_mgba_hold, args=(command,), daemon=True).start()
-                        executed = 1
-                        logger.info(f"Freedom mode - Executing hold command: {command}")
-                    else:
-                        executed = 0
-                        logger.info(f"Freedom mode - Hold command ignored (executing): {command}")
-            elif current_mode == "秩序":
-                # 秩序模式：添加到投票统计，加上hold:前缀标识长按指令
-                add_order_command(display_command, f"hold:{command}")
-                executed = 1
-                logger.info(f"Order mode - Added hold command to voting: {display_command}")
-        
-        # 创建结构化的弹幕数据
-        danmaku_data = {
-            'username': filter_username(username),
-            'command': display_command,
-            'timestamp': time.time()
-        }
-        
-        # 添加到显示队列
-        with danmaku_lock:
-            danmaku_display_queue.append(danmaku_data)
-        
-        # 广播给前端
-        broadcast_danmaku(danmaku_data)
-        
-        # 保存到CSV
-        try:
-            danmaku_saver.save_danmaku(current_time, username, original_command, executed, platform)
-        except Exception as e:
-            logger.error(f"Failed to save hold command to CSV: {e}")
-        
-        # 如果是秩序模式，发送democracy更新
-        if current_mode == "秩序":
-            with order_lock:
-                if order_commands:
-                    sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
-                    # 使用显示名称而不是统计key
-                    formatted_commands = [(votes[2] if len(votes) > 2 else cmd, votes[0]) for cmd, votes in sorted_commands]
-                    democracy_update = {
-                        'type': 'democracy_update',
-                        'democracy_info': {
-                            'commands': formatted_commands[:5],
-                            'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
-                        }
-                    }
-                    
-                    with sse_lock:
-                        disconnected_clients = []
-                        for client_queue in sse_clients:
-                            try:
-                                client_queue.put(democracy_update)
-                            except:
-                                disconnected_clients.append(client_queue)
-                        
-                        for client in disconnected_clients:
-                            sse_clients.remove(client)
-        
-        return  # 长按指令处理完毕，直接返回
+    # # 检查是否是长按指令（如ii、ii2、jj3等）
+    # is_hold_command = False
+    # 
+    # # 支持两种分隔符：'+' 和空格，优先使用 '+' 分割
+    # if '+' in command_lower:
+    #     hold_sub_commands = command_lower.split('+', 2)
+    # else:
+    #     hold_sub_commands = command_lower.split(' ', 2)
+    # 
+    # # 检查是否所有子指令都是长按格式
+    # all_hold_commands = True
+    # for sub_cmd in hold_sub_commands:
+    #     sub_cmd = sub_cmd.strip()
+    #     if not sub_cmd:
+    #         continue
+    #     
+    #     # 检查是否是长按指令格式（如ii、ii2、jj3等）
+    #     if len(sub_cmd) >= 2:
+    #         first_char = sub_cmd[0]
+    #         second_char = sub_cmd[1]
+    #         
+    #         if first_char == second_char and first_char in COMMAND_TO_KEY:
+    #             # 检查后面是否只有数字或为空
+    #             remaining_chars = sub_cmd[2:]
+    #             if remaining_chars == '' or remaining_chars.isdigit():
+    #                 continue  # 这是一个有效的长按指令
+    #     
+    #     # 如果到这里，说明不是长按指令格式
+    #     all_hold_commands = False
+    #     break
+    # 
+    # if all_hold_commands and any(sub_cmd.strip() for sub_cmd in hold_sub_commands):
+    #     is_hold_command = True
+    #     
+    #     # 获取当前时间戳
+    #     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #     
+    #     # 生成显示用的指令
+    #     display_commands = []
+    #     for sub_cmd in hold_sub_commands:
+    #         sub_cmd = sub_cmd.strip()
+    #         if not sub_cmd:
+    #             continue
+    #         
+    #         first_char = sub_cmd[0]
+    #         hold_duration = 1.0
+    #         remaining_chars = sub_cmd[2:]
+    #         
+    #         if remaining_chars.isdigit():
+    #             duration_value = int(remaining_chars)
+    #             if 1 <= duration_value <= 9:
+    #                 hold_duration = float(duration_value)
+    #         
+    #         key = COMMAND_TO_KEY.get(first_char, first_char)
+    #         display_cmd = KEY_TO_DISPLAY.get(key, first_char)
+    #         if hold_duration > 1.0:
+    #             display_cmd += f"长按{int(hold_duration)}s"
+    #         else:
+    #             display_cmd += "长按1s"
+    #         display_commands.append(display_cmd)
+    #     
+    #     # 根据原始指令格式决定显示格式
+    #     if '+' in original_command:
+    #         display_command = ' + '.join(display_commands)
+    #     else:
+    #         display_command = ' + '.join(display_commands)
+    #     
+    #     # 根据当前模式处理长按指令
+    #     executed = 0
+    #     with mode_lock:
+    #         if current_mode == "自由":
+    #             # 自由模式：直接执行长按指令
+    #             with latest_command_lock:
+    #                 if not executing_command:
+    #                     # 直接执行长按指令，不通过latest_command队列
+    #                     threading.Thread(target=control_mgba_hold, args=(command,), daemon=True).start()
+    #                     executed = 1
+    #                     logger.info(f"Freedom mode - Executing hold command: {command}")
+    #                 else:
+    #                     executed = 0
+    #                     logger.info(f"Freedom mode - Hold command ignored (executing): {command}")
+    #         elif current_mode == "秩序":
+    #             # 秩序模式：添加到投票统计，加上hold:前缀标识长按指令
+    #             add_order_command(display_command, f"hold:{command}")
+    #             executed = 1
+    #             logger.info(f"Order mode - Added hold command to voting: {display_command}")
+    #     
+    #     # 创建结构化的弹幕数据
+    #     danmaku_data = {
+    #         'username': filter_username(username),
+    #         'command': display_command,
+    #         'timestamp': time.time()
+    #     }
+    #     
+    #     # 添加到显示队列
+    #     with danmaku_lock:
+    #         danmaku_display_queue.append(danmaku_data)
+    #     
+    #     # 广播给前端
+    #     broadcast_danmaku(danmaku_data)
+    #     
+    #     # 保存到CSV
+    #     try:
+    #         danmaku_saver.save_danmaku(current_time, username, original_command, executed, platform)
+    #     except Exception as e:
+    #         logger.error(f"Failed to save hold command to CSV: {e}")
+    #     
+    #     # 如果是秩序模式，发送democracy更新
+    #     if current_mode == "秩序":
+    #         with order_lock:
+    #             if order_commands:
+    #                 sorted_commands = sorted(order_commands.items(), key=lambda x: x[1][0], reverse=True)
+    #                 # 使用显示名称而不是统计key
+    #                 formatted_commands = [(votes[2] if len(votes) > 2 else cmd, votes[0]) for cmd, votes in sorted_commands]
+    #                 democracy_update = {
+    #                     'type': 'democracy_update',
+    #                     'democracy_info': {
+    #                         'commands': formatted_commands[:5],
+    #                         'time_left': max(0, ORDER_INTERVAL - (time.time() - order_start_time)) if order_start_time else ORDER_INTERVAL
+    #                     }
+    #                 }
+    #                 
+    #                 with sse_lock:
+    #                     disconnected_clients = []
+    #                     for client_queue in sse_clients:
+    #                         try:
+    #                             client_queue.put(democracy_update)
+    #                         except:
+    #                             disconnected_clients.append(client_queue)
+    #                     
+    #                     for client in disconnected_clients:
+    #                         sse_clients.remove(client)
+    #     
+    #     return  # 长按指令处理完毕，直接返回
     
     # 获取当前时间戳（精确到秒）
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1739,8 +2358,19 @@ def process_danmaku_command(username: str, command: str, room_id: str = None, pl
             digit = sub_cmd[-1]
             base_command = sub_cmd[:-1]
             repeat_count = int(digit)
-            if repeat_count < 1 or repeat_count > 9:
-                repeat_count = 1
+            if repeat_count < 1 or repeat_count > 3:
+                logger.warning(f"Command number out of range (1-3), ignored: {sub_cmd}")
+                continue  # 跳过这个无效的子指令
+        
+        # 检查是否是start或select命令，如果是组合指令且包含这些命令，则拒绝
+        if len(sub_commands) > 1 and base_command in ['start', '开始', 'select', '选择']:
+            logger.warning(f"Start/Select commands cannot be used in combination commands: {original_command}")
+            return  # 直接返回，不处理包含start/select的组合指令
+        
+        # 检查start和select命令是否带有数字，如果带有则拒绝
+        if base_command in ['start', '开始', 'select', '选择'] and repeat_count > 1:
+            logger.warning(f"Start/Select commands cannot have numbers: {original_command}")
+            return  # 直接返回，不处理带数字的start/select指令
         
         # 验证基础命令是否合法
         if base_command in COMMAND_TO_KEY:
@@ -1830,26 +2460,7 @@ def process_danmaku_command(username: str, command: str, room_id: str = None, pl
     except Exception as e:
         logger.error(f"Failed to save danmaku to CSV: {e}")
 
-class DanmakuHandler(blivedm.BaseHandler):
-    """处理 Bilibili WSS 模式直播间消息"""
-    def _on_heartbeat(self, client: blivedm.BLiveClient, message: web_models.HeartbeatMessage):
-        logger.debug(f"[{client.room_id}] Heartbeat")
-
-    def _on_danmaku(self, client: blivedm.BLiveClient, message: web_models.DanmakuMessage):
-        logger.info(f"[哔哩哔哩] {message.uname}: {message.msg}")
-        process_danmaku_command(message.uname, message.msg, str(client.room_id))
-
-    def _on_gift(self, client: blivedm.BLiveClient, message: web_models.GiftMessage):
-        logger.info(f"[哔哩哔哩] {message.uname} 赠送 {message.gift_name}x{message.num}")
-
-    def _on_user_toast_v2(self, client: blivedm.BLiveClient, message: web_models.UserToastV2Message):
-        logger.info(f"[哔哩哔哩] {message.username} 上舰，guard_level={message.guard_level}")
-
-    def _on_super_chat(self, client: blivedm.BLiveClient, message: web_models.SuperChatMessage):
-        logger.info(f"[哔哩哔哩] 醒目留言 ¥{message.price} {message.uname}: {message.message}")
-
-    def _on_log_in_notice(self, client: blivedm.BLiveClient, message: dict):
-        logger.info(f"[哔哩哔哩] Login notice: {message['data']['notice_msg']}")
+# 原有的DanmakuHandler类已被移除，现在使用BilibiliWebSocketClient直接处理弹幕
 
 class OpenLiveHandler(blivedm.BaseHandler):
     """处理 Bilibili OpenLive 模式直播间消息"""
@@ -1891,6 +2502,7 @@ class OpenLiveHandler(blivedm.BaseHandler):
 def index():
     """渲染 HTML 页面"""
     runtime = get_runtime()
+    game_duration = get_game_duration()  # 获取游戏时长
     
     # 获取当前模式信息
     with mode_lock:
@@ -1921,6 +2533,7 @@ def index():
     
     return render_template('index.html', 
                          runtime=runtime,
+                         game_duration=game_duration,
                          mode_info=mode_info,
                          democracy_info=democracy_info,
                          voting_enabled=VOTING_ENABLED,
@@ -1982,6 +2595,7 @@ def danmaku_stream():
                     heartbeat_data = {
                         'type': 'heartbeat', 
                         'runtime': get_runtime(),
+                        'game_duration': get_game_duration(),
                         'mode_info': mode_info,
                         'democracy_info': democracy_info
                     }
@@ -2020,6 +2634,7 @@ async def main():
     load_config()  # 首先加载配置
     init_session()
     load_or_set_start_time()
+    load_game_duration()  # 加载游戏时长
     
     # 启动Web服务器线程
     web_thread = threading.Thread(target=run_web_server, daemon=True)
@@ -2050,11 +2665,16 @@ async def main():
     config_reload_thread.start()
     logger.info("Started config hot reload thread")
     
-    # 启动每小时投票重置线程
+    # 启动秩序模式超时线程
     if VOTING_ENABLED:
-        hourly_reset_thread = threading.Thread(target=hourly_vote_reset_thread, daemon=True)
-        hourly_reset_thread.start()
-        logger.info("Started hourly vote reset thread")
+        order_timeout_thread = threading.Thread(target=order_mode_timeout_thread, daemon=True)
+        order_timeout_thread.start()
+        logger.info("Started order mode timeout thread")
+    
+    # 启动游戏时长更新线程
+    duration_thread = threading.Thread(target=game_duration_thread, daemon=True)
+    duration_thread.start()
+    logger.info("Started game duration thread")
     
     # 启动抖音WebSocket服务器
     if DOUYIN_ENABLED:

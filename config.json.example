@@ -1,16 +1,25 @@
 {
-    "room_id": example_room_id,
+    "room_id": 177xxxxxx,
     "sessdata": "",
     "openlive": {
-        "access_key_id": "example",
-        "access_key_secret": "example",
-        "app_id": example,
-        "room_owner_auth_code": "example"
+        "access_key_id": "xxxxCsB1jNxxxxx",
+        "access_key_secret": "xxxxxQK7Zuxxxxxxx",
+        "app_id": 1760965290444,
+        "room_owner_auth_code": "xxxxETRCYxxxx"
     },
-    "danmaku_mode": "openlive",
+    "danmaku_mode": "wss",
     "douyin": {
-        "enabled": false,
+        "enabled": true,
         "websocket_port": 8765
+    },
+    "ai_danmu_bot": {
+        "enabled": true,
+        "api_key": "sk-f1181caebae94xxxxxxxx",
+        "model": "qwen-max",
+        "response_interval": 39,
+        "max_danmu_history": 15,
+        "min_danmu_for_response": 3,
+        "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
     },
     "ORDER_INTERVAL": 20,
     "voting_enabled": true,

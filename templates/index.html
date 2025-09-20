@@ -585,6 +585,7 @@
         // 全局变量
         let eventSource;
         let startTime;
+        let baseDuration = 0;  // 基础累计时长（秒）
         let runtimeInterval;
         
         // 从模板获取数据，添加错误处理
@@ -616,34 +617,35 @@
         
         currentMode = (modeInfo && modeInfo.current_mode === '秩序') ? 'order' : 'freedom';
         
-        // 格式化运行时间为中文显示
-        function formatRuntimeChinese(seconds) {
+        // 格式化游戏时长为中文显示
+        function formatGameDuration(seconds) {
             const days = Math.floor(seconds / 86400);
             const hours = Math.floor((seconds % 86400) / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
             const secs = seconds % 60;
             
             // 始终显示所有时间单位，即使为0
-            let result = days + '天 ' + hours + '时 ' + minutes + '分 ' + secs + '秒';
+            let result = days + '天' + hours + '小时' + minutes + '分' + secs + '秒';
             
             return result;
         }
         
-        // 更新运行时间显示
-        function updateRuntime() {
+        // 更新游戏时长显示
+        function updateGameDuration() {
             if (startTime) {
                 const currentTime = Math.floor(Date.now() / 1000);
-                const runtime = currentTime - startTime;
-                document.getElementById('runtime').textContent = formatRuntimeChinese(runtime);
+                const sessionDuration = currentTime - startTime;
+                const totalDuration = baseDuration + sessionDuration;
+                document.getElementById('runtime').textContent = formatGameDuration(totalDuration);
             }
         }
         
-        // 启动运行时间计时器
-        function startRuntimeTimer() {
+        // 启动游戏时长计时器
+        function startGameDurationTimer() {
             if (runtimeInterval) {
                 clearInterval(runtimeInterval);
             }
-            runtimeInterval = setInterval(updateRuntime, 1000);
+            runtimeInterval = setInterval(updateGameDuration, 1000);
         }
         
         
@@ -1032,19 +1034,18 @@
                     
                     if (data.type === 'heartbeat') {
                         // 从服务器获取开始时间并启动本地计时器
-                        if (data.start_time && !startTime) {
-                            startTime = data.start_time;
-                            startRuntimeTimer();
+                        if (data.type === 'heartbeat') {
+                            startGameDurationTimer();
                         }
-                        // 如果服务器提供了运行时间，解析并设置开始时间
-                        if (data.runtime && !startTime) {
-                            // 从运行时间字符串解析秒数
-                            const runtimeMatch = data.runtime.match(/(\d+)d\s*(\d+)h\s*(\d+)m\s*(\d+)s/);
-                            if (runtimeMatch) {
-                                const [, days, hours, minutes, seconds] = runtimeMatch;
-                                const totalSeconds = parseInt(days) * 86400 + parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
-                                startTime = Math.floor(Date.now() / 1000) - totalSeconds;
-                                startRuntimeTimer();
+                        // 如果服务器提供了游戏时长，解析并设置开始时间
+                        if (data.game_duration && !startTime) {
+                            // 从游戏时长字符串解析秒数
+                            const durationMatch = data.game_duration.match(/(\d+)天(\d+)小时(\d+)分(\d+)秒/);
+                            if (durationMatch) {
+                                const [, days, hours, minutes, seconds] = durationMatch;
+                                baseDuration = parseInt(days) * 86400 + parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
+                                startTime = Math.floor(Date.now() / 1000);  // 设置为当前时间作为会话开始时间
+                                startGameDurationTimer();
                             }
                         }
                         // 更新模式信息
@@ -1100,19 +1101,19 @@
             };
         }
         
-        // 页面加载完成后连接SSE并初始化运行时间
+        // 页面加载完成后连接SSE并初始化游戏时长
         document.addEventListener('DOMContentLoaded', function() {
-            // 如果页面已经有运行时间，解析并启动计时器
+            // 如果页面已经有游戏时长，解析并启动计时器
             const runtimeElement = document.getElementById('runtime');
-            const currentRuntime = runtimeElement.textContent;
+            const currentDuration = runtimeElement.textContent;
             
-            // 尝试解析现有的运行时间格式 (如果是英文格式)
-            const runtimeMatch = currentRuntime.match(/(\d+)d\s*(\d+)h\s*(\d+)m\s*(\d+)s/);
-            if (runtimeMatch) {
-                const [, days, hours, minutes, seconds] = runtimeMatch;
-                const totalSeconds = parseInt(days) * 86400 + parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
-                startTime = Math.floor(Date.now() / 1000) - totalSeconds;
-                startRuntimeTimer();
+            // 尝试解析现有的游戏时长格式
+            const durationMatch = currentDuration.match(/(\d+)天(\d+)小时(\d+)分(\d+)秒/);
+            if (durationMatch) {
+                const [, days, hours, minutes, seconds] = durationMatch;
+                baseDuration = parseInt(days) * 86400 + parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
+                startTime = Math.floor(Date.now() / 1000);  // 设置为当前时间作为会话开始时间
+                startGameDurationTimer();
             }
             
             connectSSE();
@@ -1133,7 +1134,7 @@
     <div class="container">
         <h1>We Play</h1>
         <div class="subtitle">Pokémon</div>
-        <div id="runtime">{{ runtime }}</div>
+        <div id="runtime">{{ game_duration }}</div>
         <!-- 投票占比显示条（仅在启用投票功能时显示） -->
         {% if voting_enabled %}
         <div class="vote-bar-container">
@@ -1209,8 +1210,8 @@
                 <span class="command-key">ikjl</span> 上下左右 | <span class="command-key">A/B</span> 确认/取消 | <span class="command-key">开始/选择 </span> 功能键{% if voting_enabled %} | <span class="command-key">自由/秩序</span> 投票{% endif %}
             </div>
             <div style="text-align: center; font-size: 9px; color: #888;">
-                按键+数字，如：i3、a5（重复执行）<br>
-                组合指令：a3 b2 i , r前缀表示奔跑: rk2 i2，长按指令：ii2 <br>
+                重复执行：i3，最多为3<br>
+                组合指令：a3 b2 i , r前缀表示奔跑: rk2 i2 <br>
                 
             </div>
         </div>
