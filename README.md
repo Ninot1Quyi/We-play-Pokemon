@@ -12,9 +12,13 @@ We-play-Pokemon 是一个基于 Python 的项目，旨在通过直播弹幕控�
 2025-9-20 21:19
 **完结撒花🎉**
 
-初代宝可梦直播
+具备自由和秩序两种模式，也可以通过设置调整是否开启投票
+![完整功能演示](screenshots/screenshots3.jpg)
+
+初代宝可梦直播测试
 ![screenshots1](screenshots/screenshots1.jpg)
 ![screenshots2](screenshots/screenshots2.png)
+
 ## 项目结构
 
 ```
